@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTD Basis Monitor — TYM26</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   DESIGN SYSTEM
+   Aesthetic: Bloomberg-adjacent but cleaner. Monospace-first.
+   Dark charcoal base, amber accent, surgical data density.
+   Every element earns its place.
+   ============================================================ */
+
+:root {
+  --bg-0:        #0a0a0b;
+  --bg-1:        #111114;
+  --bg-2:        #18181c;
+  --bg-3:        #222228;
+  --border:      #2a2a32;
+  --border-hi:   #3a3a46;
+
+  --text-0:      #e8e8ec;
+  --text-1:      #9898a8;
+  --text-2:      #5a5a6a;
+
+  --amber:       #f0a500;
+  --amber-dim:   #7a5200;
+  --green:       #22c55e;
+  --green-dim:   #14532d;
+  --red:         #ef4444;
+  --red-dim:     #7f1d1d;
+  --blue:        #60a5fa;
+  --blue-dim:    #1e3a5f;
+
+  --font-mono:   'IBM Plex Mono', monospace;
+  --font-sans:   'IBM Plex Sans', sans-serif;
+
+  --radius:      3px;
+  --transition:  150ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 13px; }
+
+body {
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+
+.layout {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  grid-template-columns: 1fr;
+  min-height: 100vh;
+}
+
+/* ============================================================
+   TOPBAR
+   ============================================================ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 44px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.wordmark {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-0);
+}
+
+.wordmark span { color: var(--amber); }
+
+.contract-badge {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  background: rgba(240,165,0,0.08);
+  border: 1px solid var(--amber-dim);
+  padding: 2px 8px;
+  border-radius: var(--radius);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: background var(--transition);
+}
+.status-dot.live  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.error { background: var(--red); }
+
+.status-text {
+  font-size: 10px;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+}
+
+.last-update {
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+.refresh-btn {
+  background: none;
+  border: 1px solid var(--border-hi);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: all var(--transition);
+}
+.refresh-btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* ============================================================
+   KPI STRIP
+   ============================================================ */
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.kpi {
+  padding: 14px 20px;
+  border-right: 1px solid var(--border);
+  animation: fadeIn 0.4s ease both;
+}
+.kpi:last-child { border-right: none; }
+
+.kpi-label {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 5px;
+}
+
+.kpi-value {
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--text-0);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.kpi-value.amber  { color: var(--amber); }
+.kpi-value.green  { color: var(--green); }
+.kpi-value.red    { color: var(--red); }
+.kpi-value.blue   { color: var(--blue); }
+
+.kpi-sub {
+  font-size: 9px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+/* ============================================================
+   MAIN GRID
+   ============================================================ */
+
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: auto auto auto;
+  gap: 0;
+}
+
+/* ============================================================
+   PANELS
+   ============================================================ */
+
+.panel {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  animation: fadeIn 0.5s ease both;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.panel-title {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.panel-meta {
+  font-size: 9px;
+  color: var(--text-2);
+}
+
+/* ============================================================
+   RISK BANNER
+   ============================================================ */
+
+.risk-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  transition: all 0.3s ease;
+}
+
+.risk-banner.LOW      { background: rgba(34,197,94,0.04);  color: var(--green); border-left: 3px solid var(--green); }
+.risk-banner.ELEVATED { background: rgba(240,165,0,0.06);  color: var(--amber); border-left: 3px solid var(--amber); }
+.risk-banner.CRITICAL { background: rgba(239,68,68,0.08);  color: var(--red);   border-left: 3px solid var(--red);
+                        animation: pulse 2s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+.risk-flag {
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+
+.risk-detail { color: var(--text-1); }
+
+.trend-badge {
+  margin-left: auto;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  letter-spacing: 0.08em;
+}
+.trend-badge.NARROWING { background: var(--red-dim);   color: var(--red); }
+.trend-badge.WIDENING  { background: var(--green-dim); color: var(--green); }
+.trend-badge.STABLE    { background: var(--bg-3);      color: var(--text-2); }
+
+/* ============================================================
+   BASKET TABLE
+   ============================================================ */
+
+.basket-panel {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+
+.table-wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+thead th {
+  padding: 7px 12px;
+  text-align: right;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+thead th:first-child { text-align: left; }
+
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition);
+  cursor: pointer;
+}
+tbody tr:hover { background: var(--bg-2); }
+tbody tr:last-child { border-bottom: none; }
+
+tbody tr.ctd-row {
+  background: rgba(240,165,0,0.04);
+}
+tbody tr.ctd-row:hover { background: rgba(240,165,0,0.08); }
+
+td {
+  padding: 8px 12px;
+  text-align: right;
+  color: var(--text-0);
+  white-space: nowrap;
+}
+
+td:first-child { text-align: left; }
+
+.bond-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ctd-tag {
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+  background: rgba(240,165,0,0.1);
+  border: 1px solid var(--amber-dim);
+  padding: 1px 5px;
+  border-radius: var(--radius);
+}
+
+.ir-bar-cell { width: 80px; }
+
+.ir-bar {
+  height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  margin-top: 4px;
+}
+.ir-bar-fill {
+  height: 100%;
+  background: var(--amber);
+  border-radius: 1px;
+  transition: width 0.6s ease;
+}
+.ctd-row .ir-bar-fill { background: var(--amber); }
+
+/* ============================================================
+   SIDEBAR PANELS
+   ============================================================ */
+
+.sidebar {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  border-right: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .panel {
+  border-right: none;
+}
+
+/* proximity panel */
+.proximity-panel { flex-shrink: 0; }
+
+.proximity-body { padding: 16px; }
+
+.spread-display {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.spread-value {
+  font-size: 32px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--text-0);
+}
+
+.spread-unit {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.spread-bar-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-bottom: 10px;
+  position: relative;
+}
+
+.spread-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s ease, background 0.3s ease;
+}
+
+.threshold-markers {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+}
+
+.bond-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.bond-chip {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.bond-chip-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+
+.bond-chip-name {
+  font-size: 10px;
+  color: var(--text-0);
+}
+
+.bond-chip-ir {
+  font-size: 9px;
+  color: var(--amber);
+  margin-top: 2px;
+}
+
+/* percentile panel */
+.percentile-panel { flex-shrink: 0; }
+.percentile-body  { padding: 16px; }
+
+.percentile-gauge {
+  position: relative;
+  height: 40px;
+  margin-bottom: 10px;
+}
+
+.gauge-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(to right, var(--green), var(--amber), var(--red));
+  border-radius: 2px;
+}
+
+.gauge-needle {
+  position: absolute;
+  bottom: 2px;
+  width: 2px;
+  height: 14px;
+  background: var(--text-0);
+  border-radius: 1px;
+  transform: translateX(-50%);
+  transition: left 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.gauge-needle::after {
+  content: attr(data-value);
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-0);
+  white-space: nowrap;
+}
+
+.percentile-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pstat {
+  padding: 8px 10px;
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+.pstat:last-child { border-right: none; }
+
+.pstat-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+
+.pstat-value {
+  font-size: 11px;
+  color: var(--text-0);
+}
+
+/* carry panel */
+.carry-panel { flex-shrink: 0; }
+.carry-body  { padding: 16px; }
+
+.carry-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.carry-row:last-child { border-bottom: none; }
+
+.carry-key   { color: var(--text-2); }
+.carry-val   { color: var(--text-0); font-variant-numeric: tabular-nums; }
+.carry-val.negative { color: var(--red); }
+.carry-val.positive { color: var(--green); }
+
+/* threshold panel */
+.threshold-panel { flex-shrink: 0; }
+.threshold-body  { padding: 16px; }
+
+.fstar-display {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.fstar-value {
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--blue);
+}
+
+.fstar-label {
+  font-size: 9px;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+}
+
+.fstar-distance {
+  font-size: 10px;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+
+/* ============================================================
+   SCENARIO GRID
+   ============================================================ */
+
+.scenario-panel {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.scenario-body { padding: 16px; }
+
+.scenario-grid-display {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 3px;
+}
+
+.scenario-cell {
+  padding: 8px 4px;
+  text-align: center;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  transition: all var(--transition);
+  cursor: default;
+}
+
+.scenario-cell:hover { border-color: var(--border-hi); }
+
+.scenario-cell.ctd-same   { background: var(--bg-2); }
+.scenario-cell.ctd-switch { background: rgba(239,68,68,0.08); border-color: var(--red-dim); }
+.scenario-cell.scenario-zero { background: rgba(240,165,0,0.06); border-color: var(--amber-dim); }
+
+.sc-shift {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+}
+
+.sc-ctd {
+  font-size: 8px;
+  color: var(--text-0);
+  line-height: 1.3;
+}
+
+.sc-spread {
+  font-size: 8px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+/* ============================================================
+   CHART — basis history sparkline
+   ============================================================ */
+
+.chart-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.chart-body {
+  padding: 12px 16px;
+  height: 120px;
+  position: relative;
+}
+
+canvas#basisChart {
+  width: 100% !important;
+  height: 96px !important;
+}
+
+/* ============================================================
+   LOADING STATES
+   ============================================================ */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius);
+  height: 12px;
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   EMPTY / ERROR STATES
+   ============================================================ */
+
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+
+/* ============================================================
+   CHAT PANEL
+   ============================================================ */
+
+.chat-panel {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 420px;
+  height: 520px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-right: none;
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  border-radius: 4px 0 0 0;
+  box-shadow: -4px -4px 24px rgba(0,0,0,0.4);
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.chat-panel.open { transform: translateY(0); }
+
+.chat-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 201;
+  background: var(--bg-2);
+  border: 1px solid var(--border-hi);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: all var(--transition);
+}
+.chat-toggle:hover { background: var(--bg-3); border-color: var(--amber); }
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.chat-title {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.chat-subtitle {
+  font-size: 8px;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+
+.chat-close {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.chat-close:hover { color: var(--text-0); }
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-msg { display: flex; flex-direction: column; gap: 4px; animation: fadeIn 0.2s ease; }
+.chat-msg-role { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-2); }
+.chat-msg-text { font-size: 11px; color: var(--text-0); line-height: 1.6; font-family: var(--font-sans); }
+.chat-msg.user .chat-msg-text { color: var(--text-1); font-family: var(--font-mono); font-size: 10px; }
+
+.tool-call-log { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+.tool-call-item { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.tool-call-header { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; user-select: none; }
+.tool-call-header:hover { background: var(--bg-3); }
+.tool-call-icon { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
+.tool-call-name { font-size: 9px; font-weight: 500; letter-spacing: 0.08em; color: var(--amber); flex: 1; }
+.tool-call-input-label { font-size: 8px; color: var(--text-2); }
+.tool-call-chevron { font-size: 8px; color: var(--text-2); transition: transform var(--transition); }
+.tool-call-item.expanded .tool-call-chevron { transform: rotate(90deg); }
+.tool-call-result {
+  display: none; padding: 6px 8px; border-top: 1px solid var(--border);
+  font-size: 8px; color: var(--text-1); font-family: var(--font-mono);
+  max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5;
+}
+.tool-call-item.expanded .tool-call-result { display: block; }
+
+.chat-input-row { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.chat-input {
+  flex: 1; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text-0); font-family: var(--font-mono); font-size: 10px; padding: 7px 10px;
+  outline: none; transition: border-color var(--transition);
+}
+.chat-input:focus { border-color: var(--amber); }
+.chat-input::placeholder { color: var(--text-2); }
+.chat-send {
+  background: var(--amber); border: none; border-radius: var(--radius);
+  color: var(--bg-0); font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+  padding: 7px 12px; cursor: pointer; letter-spacing: 0.08em; transition: opacity var(--transition);
+}
+.chat-send:hover { opacity: 0.85; }
+.chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.chat-thinking { display: flex; align-items: center; gap: 8px; font-size: 9px; color: var(--text-2); letter-spacing: 0.08em; padding: 4px 0; }
+.thinking-dots span { display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: var(--amber); margin: 0 1px; animation: blink 1.2s infinite both; }
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 10px; }
+.suggestion-chip {
+  font-size: 8px; color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 3px 7px; cursor: pointer; letter-spacing: 0.04em;
+  transition: all var(--transition); white-space: nowrap;
+}
+.suggestion-chip:hover { color: var(--amber); border-color: var(--amber-dim); background: rgba(240,165,0,0.04); }
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+
+::-webkit-scrollbar            { width: 4px; height: 4px; }
+::-webkit-scrollbar-track      { background: var(--bg-0); }
+::-webkit-scrollbar-thumb      { background: var(--bg-3); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ============================================================
+       TOPBAR
+       ============================================================ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="wordmark">CTD <span>Basis</span> Monitor</span>
+      <span class="contract-badge">TYM26</span>
+    </div>
+    <div class="topbar-right">
+      <span class="last-update" id="lastUpdate">—</span>
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">CONNECTING</span>
+      <button class="refresh-btn" onclick="loadAll()">↺ REFRESH</button>
+    </div>
+  </header>
+
+  <!-- ============================================================
+       KPI STRIP
+       ============================================================ -->
+  <div class="kpi-strip">
+    <div class="kpi" style="animation-delay:0.05s">
+      <div class="kpi-label">CTD Bond</div>
+      <div class="kpi-value amber" id="kpiCtd">—</div>
+      <div class="kpi-sub" id="kpiCtdIr">implied repo —</div>
+    </div>
+    <div class="kpi" style="animation-delay:0.1s">
+      <div class="kpi-label">Net Basis</div>
+      <div class="kpi-value" id="kpiBasis">—</div>
+      <div class="kpi-sub" id="kpiBasisPct">— percentile</div>
+    </div>
+    <div class="kpi" style="animation-delay:0.15s">
+      <div class="kpi-label">Spread to Runner</div>
+      <div class="kpi-value" id="kpiSpread">—</div>
+      <div class="kpi-sub" id="kpiSpreadTrend">—</div>
+    </div>
+    <div class="kpi" style="animation-delay:0.2s">
+      <div class="kpi-label">3M Carry</div>
+      <div class="kpi-value" id="kpiCarry">—</div>
+      <div class="kpi-sub" id="kpiCarrySub">bps net</div>
+    </div>
+    <div class="kpi" style="animation-delay:0.25s">
+      <div class="kpi-label">Risk Flag</div>
+      <div class="kpi-value" id="kpiRisk">—</div>
+      <div class="kpi-sub" id="kpiRiskSub">transition risk</div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MAIN GRID
+       ============================================================ -->
+  <div class="main-grid">
+
+    <!-- BASKET TABLE -->
+    <div class="panel basket-panel">
+      <div id="riskBanner" class="risk-banner LOW" style="display:none">
+        <span class="risk-flag" id="riskFlag">—</span>
+        <span class="risk-detail" id="riskDetail">—</span>
+        <span class="trend-badge STABLE" id="trendBadge">—</span>
+      </div>
+      <div class="panel-header">
+        <span class="panel-title">Delivery Basket — Ranked by Implied Repo</span>
+        <span class="panel-meta" id="snapshotDate">—</span>
+      </div>
+      <div class="table-wrap">
+        <table id="basketTable">
+          <thead>
+            <tr>
+              <th>Bond</th>
+              <th>Cash Price</th>
+              <th>Conv Factor</th>
+              <th>Gross Basis</th>
+              <th>Net Basis (ticks)</th>
+              <th>Impl Repo %</th>
+              <th>DV01</th>
+              <th class="ir-bar-cell"></th>
+            </tr>
+          </thead>
+          <tbody id="basketBody">
+            <tr><td colspan="8"><div class="empty-state">Loading basket...</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- BASIS HISTORY CHART -->
+    <div class="panel chart-panel">
+      <div class="panel-header">
+        <span class="panel-title">CTD Net Basis — 90 Day History</span>
+        <span class="panel-meta" id="chartMeta">—</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="basisChart"></canvas>
+      </div>
+    </div>
+
+    <!-- SCENARIO GRID -->
+    <div class="panel scenario-panel">
+      <div class="panel-header">
+        <span class="panel-title">Scenario Grid — Parallel Yield Shocks</span>
+        <span class="panel-meta">CTD identity by shift</span>
+      </div>
+      <div class="scenario-body">
+        <div class="scenario-grid-display" id="scenarioGrid">
+          <div class="empty-state" style="grid-column:1/-1">Loading scenarios...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+
+      <!-- PROXIMITY -->
+      <div class="panel proximity-panel">
+        <div class="panel-header">
+          <span class="panel-title">Transition Proximity</span>
+          <span class="panel-meta">CTD vs runner-up</span>
+        </div>
+        <div class="proximity-body">
+          <div class="spread-display">
+            <span class="spread-value" id="proxSpread">—</span>
+            <span class="spread-unit">bps</span>
+          </div>
+          <div class="spread-bar-track">
+            <div class="spread-bar-fill" id="proxBar" style="width:0%"></div>
+          </div>
+          <div class="threshold-markers">
+            <span>0</span><span style="color:var(--red)">5 CRIT</span>
+            <span style="color:var(--amber)">15 ELEV</span><span>50+</span>
+          </div>
+          <div class="bond-pair">
+            <div class="bond-chip">
+              <div class="bond-chip-label">CTD</div>
+              <div class="bond-chip-name" id="proxCtdName">—</div>
+              <div class="bond-chip-ir"  id="proxCtdIr">—</div>
+            </div>
+            <div class="bond-chip">
+              <div class="bond-chip-label">Runner-up</div>
+              <div class="bond-chip-name" id="proxRunnerName">—</div>
+              <div class="bond-chip-ir"  id="proxRunnerIr">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PERCENTILE -->
+      <div class="panel percentile-panel">
+        <div class="panel-header">
+          <span class="panel-title">Basis Percentile</span>
+          <span class="panel-meta">90-day distribution</span>
+        </div>
+        <div class="percentile-body">
+          <div class="percentile-gauge">
+            <div class="gauge-track"></div>
+            <div class="gauge-needle" id="gaugeNeedle" data-value="—" style="left:0%"></div>
+          </div>
+          <div class="percentile-stats">
+            <div class="pstat">
+              <div class="pstat-label">Min</div>
+              <div class="pstat-value" id="pctMin">—</div>
+            </div>
+            <div class="pstat">
+              <div class="pstat-label">Mean</div>
+              <div class="pstat-value" id="pctMean">—</div>
+            </div>
+            <div class="pstat">
+              <div class="pstat-label">Max</div>
+              <div class="pstat-value" id="pctMax">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARRY -->
+      <div class="panel carry-panel">
+        <div class="panel-header">
+          <span class="panel-title">Carry Decomposition</span>
+          <span class="panel-meta" id="carryLabel">CTD</span>
+        </div>
+        <div class="carry-body">
+          <div class="carry-row">
+            <span class="carry-key">Repo Rate</span>
+            <span class="carry-val" id="carryRepo">—</span>
+          </div>
+          <div class="carry-row">
+            <span class="carry-key">3M Coupon Income</span>
+            <span class="carry-val" id="carry3mCoupon">—</span>
+          </div>
+          <div class="carry-row">
+            <span class="carry-key">3M Financing Cost</span>
+            <span class="carry-val" id="carry3mFin">—</span>
+          </div>
+          <div class="carry-row">
+            <span class="carry-key">3M Net Carry</span>
+            <span class="carry-val" id="carry3mNet">—</span>
+          </div>
+          <div class="carry-row">
+            <span class="carry-key">6M Net Carry</span>
+            <span class="carry-val" id="carry6mNet">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- F* THRESHOLD -->
+      <div class="panel threshold-panel">
+        <div class="panel-header">
+          <span class="panel-title">F* Threshold</span>
+          <span class="panel-meta">CTD switch price</span>
+        </div>
+        <div class="threshold-body">
+          <div class="fstar-display">
+            <span class="fstar-value" id="fstarValue">—</span>
+            <span class="fstar-label">F*</span>
+          </div>
+          <div class="fstar-distance" id="fstarDistance">—</div>
+          <div class="carry-row" style="margin-top:8px">
+            <span class="carry-key">Current Futures</span>
+            <span class="carry-val" id="fstarCurrent">—</span>
+          </div>
+          <div class="carry-row">
+            <span class="carry-key">Direction</span>
+            <span class="carry-val" id="fstarDirection">—</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+  </div><!-- /main-grid -->
+</div><!-- /layout -->
+
+<script>
+/* ============================================================
+   CTD BASIS MONITOR — Frontend JS
+   Single responsibility: fetch from Flask API, render to DOM.
+   No framework. No build step. Native fetch + DOM manipulation.
+   ============================================================ */
+
+const API = 'http://localhost:5001/api';
+const CONTRACT = 'TYM26';
+
+// store CTD cusip globally so carry/history can reference it
+let ctdCusip = null;
+let chartInstance = null;
+
+// ============================================================
+// FETCH HELPERS
+// ============================================================
+
+async function get(endpoint) {
+  const res = await fetch(`${API}${endpoint}?contract=${CONTRACT}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ============================================================
+// LOAD ALL — orchestrates all 8 tool calls
+// ============================================================
+
+async function loadAll() {
+  setStatus('connecting');
+
+  try {
+    // parallel fetch — Tools 1, 3, 5, 6, 7 simultaneously
+    const [basket, percentile, proximity, scenarios, threshold] = await Promise.all([
+      get('/basket'),
+      get('/percentile'),
+      get('/proximity'),
+      get('/scenarios'),
+      get('/threshold'),
+    ]);
+
+    renderBasket(basket);
+    renderProximity(proximity);
+    renderPercentile(percentile);
+    renderScenarios(scenarios);
+    renderThreshold(threshold);
+    renderKpis(basket, percentile, proximity);
+
+    // after basket loads, get CTD cusip for carry + history
+    ctdCusip = basket.find(b => b.is_ctd)?.cusip;
+    if (ctdCusip) {
+      const [carry, history] = await Promise.all([
+        fetch(`${API}/carry/${ctdCusip}?contract=${CONTRACT}`).then(r => r.json()),
+        fetch(`${API}/history/${ctdCusip}?contract=${CONTRACT}&days=90`).then(r => r.json()),
+      ]);
+      renderCarry(carry);
+      renderChart(history);
+    }
+
+    setStatus('live');
+    document.getElementById('lastUpdate').textContent =
+      new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+  } catch (err) {
+    setStatus('error');
+    console.error('Load failed:', err);
+  }
+}
+
+// ============================================================
+// RENDER — Basket Table (Tool 1)
+// ============================================================
+
+function renderBasket(basket) {
+  const maxIr = Math.max(...basket.map(b => b.implied_repo_pct));
+  const tbody  = document.getElementById('basketBody');
+
+  // snapshot date from first row — stored in API response indirectly
+  // use today's date as display fallback
+  document.getElementById('snapshotDate').textContent =
+    new Date().toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'});
+
+  tbody.innerHTML = basket.map(bond => {
+    const isCTD   = bond.is_ctd;
+    const barPct  = ((bond.implied_repo_pct / maxIr) * 100).toFixed(1);
+    const irColor = isCTD ? 'style="color:var(--amber)"' : '';
+
+    return `
+      <tr class="${isCTD ? 'ctd-row' : ''}" onclick="selectBond('${bond.cusip}', '${bond.label}')">
+        <td>
+          <div class="bond-label">
+            ${isCTD ? '<span class="ctd-tag">CTD</span>' : ''}
+            ${bond.label}
+          </div>
+        </td>
+        <td>${bond.cash_price.toFixed(4)}</td>
+        <td>${bond.conv_factor.toFixed(4)}</td>
+        <td>${bond.gross_basis.toFixed(4)}</td>
+        <td>${bond.net_basis_ticks.toFixed(3)}</td>
+        <td ${irColor}>${bond.implied_repo_pct.toFixed(4)}%</td>
+        <td>${bond.dv01.toFixed(4)}</td>
+        <td class="ir-bar-cell">
+          <div class="ir-bar">
+            <div class="ir-bar-fill" style="width:${barPct}%"></div>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER — Proximity Panel (Tool 5)
+// ============================================================
+
+function renderProximity(prox) {
+  const spread = prox.current_spread_bps;
+
+  document.getElementById('proxSpread').textContent = spread.toFixed(1);
+  document.getElementById('proxCtdName').textContent    = prox.ctd_label    || '—';
+  document.getElementById('proxRunnerName').textContent = prox.runner_label || '—';
+
+  // risk banner
+  const banner = document.getElementById('riskBanner');
+  banner.style.display = 'flex';
+  banner.className = `risk-banner ${prox.risk_flag}`;
+  document.getElementById('riskFlag').textContent = prox.risk_flag;
+  document.getElementById('riskDetail').textContent =
+    `${spread.toFixed(1)} bps spread to ${prox.runner_label}`;
+
+  const trendBadge = document.getElementById('trendBadge');
+  trendBadge.textContent  = prox.trend;
+  trendBadge.className    = `trend-badge ${prox.trend}`;
+
+  // spread bar: 0bps = 0%, 50bps = 100% (clamp)
+  const barPct = Math.min((spread / 50) * 100, 100).toFixed(1);
+  const bar    = document.getElementById('proxBar');
+  bar.style.width = `${barPct}%`;
+  bar.style.background =
+    spread < 5  ? 'var(--red)'   :
+    spread < 15 ? 'var(--amber)' :
+                  'var(--green)';
+}
+
+// ============================================================
+// RENDER — Percentile Panel (Tool 3)
+// ============================================================
+
+function renderPercentile(pct) {
+  const rank = pct.percentile_rank;
+
+  // move needle
+  const needle = document.getElementById('gaugeNeedle');
+  needle.style.left     = `${rank}%`;
+  needle.dataset.value  = `${rank.toFixed(1)}th`;
+
+  document.getElementById('pctMin').textContent  = pct.min_90d.toFixed(2);
+  document.getElementById('pctMean').textContent = pct.mean_90d.toFixed(2);
+  document.getElementById('pctMax').textContent  = pct.max_90d.toFixed(2);
+}
+
+// ============================================================
+// RENDER — Scenario Grid (Tool 6)
+// ============================================================
+
+function renderScenarios(data) {
+  const todayCtd = data.today_ctd;
+  const grid     = document.getElementById('scenarioGrid');
+
+  grid.innerHTML = data.scenarios.map(s => {
+    const isSwitch  = s.ctd_label !== todayCtd;
+    const isZero    = s.shift_bps === 0;
+    const cellClass = isZero    ? 'scenario-cell scenario-zero' :
+                      isSwitch  ? 'scenario-cell ctd-switch'    :
+                                  'scenario-cell ctd-same';
+
+    const shiftLabel = s.shift_bps > 0 ? `+${s.shift_bps}` : `${s.shift_bps}`;
+    // shorten label for display: "3.750% Mar-33" → "Mar-33"
+    const shortCtd   = s.ctd_label.split(' ').slice(-1)[0];
+
+    return `
+      <div class="${cellClass}" title="${s.ctd_label} | ${s.spread_to_runner_bps.toFixed(1)} bps spread">
+        <div class="sc-shift">${shiftLabel}</div>
+        <div class="sc-ctd">${shortCtd}</div>
+        <div class="sc-spread">${s.spread_to_runner_bps.toFixed(0)}bp</div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER — Carry Panel (Tool 8)
+// ============================================================
+
+function renderCarry(carry) {
+  document.getElementById('carryLabel').textContent = carry.label;
+  document.getElementById('carryRepo').textContent  = `${carry.repo_rate_pct.toFixed(3)}%`;
+
+  const net3m = carry['3m'].net_carry_bps;
+  const net6m = carry['6m'].net_carry_bps;
+
+  document.getElementById('carry3mCoupon').textContent = `${carry['3m'].coupon_income.toFixed(4)} pts`;
+  document.getElementById('carry3mFin').textContent    = `${carry['3m'].financing_cost.toFixed(4)} pts`;
+
+  const net3mEl = document.getElementById('carry3mNet');
+  net3mEl.textContent = `${net3m.toFixed(2)} bps`;
+  net3mEl.className   = `carry-val ${net3m < 0 ? 'negative' : 'positive'}`;
+
+  const net6mEl = document.getElementById('carry6mNet');
+  net6mEl.textContent = `${net6m.toFixed(2)} bps`;
+  net6mEl.className   = `carry-val ${net6m < 0 ? 'negative' : 'positive'}`;
+}
+
+// ============================================================
+// RENDER — F* Threshold Panel (Tool 7)
+// ============================================================
+
+function renderThreshold(thresh) {
+  const fstar = thresh.transition_threshold_futures_price;
+  document.getElementById('fstarValue').textContent     = fstar > 0 ? fstar.toFixed(4) : 'N/A';
+  document.getElementById('fstarCurrent').textContent   = thresh.current_futures_price?.toFixed(4) || '—';
+  document.getElementById('fstarDirection').textContent = thresh.direction || '—';
+  document.getElementById('fstarDistance').textContent  =
+    fstar > 0
+      ? `${thresh.distance_to_threshold_pts.toFixed(4)} pts to CTD switch`
+      : 'Switch requires unrealistic price move';
+}
+
+// ============================================================
+// RENDER — Basis History Chart (Tool 2)
+// ============================================================
+
+function renderChart(histData) {
+  const ctx    = document.getElementById('basisChart').getContext('2d');
+  const labels = histData.history.map(h => h.date.slice(5));   // "MM-DD"
+  const values = histData.history.map(h => h.net_basis_ticks);
+  const ma20   = histData.history.map(h => h.ma_20d);
+
+  document.getElementById('chartMeta').textContent =
+    `${histData.label} — ${histData.current_percentile_rank}th pct`;
+
+  if (chartInstance) chartInstance.destroy();
+
+  // minimal inline Chart.js via CDN
+  if (!window.Chart) return;
+
+  chartInstance = new window.Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Net Basis (ticks)',
+          data: values,
+          borderColor: 'rgba(240,165,0,0.8)',
+          backgroundColor: 'rgba(240,165,0,0.04)',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: '20d MA',
+          data: ma20,
+          borderColor: 'rgba(96,165,250,0.6)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          borderDash: [3, 3],
+        },
+      ],
+    },
+    options: {
+      responsive: false,
+      animation: { duration: 600 },
+      plugins: { legend: { display: false }, tooltip: {
+        mode: 'index',
+        intersect: false,
+        backgroundColor: 'rgba(17,17,20,0.95)',
+        borderColor: '#2a2a32',
+        borderWidth: 1,
+        titleColor: '#9898a8',
+        bodyColor: '#e8e8ec',
+        titleFont: { family: 'IBM Plex Mono', size: 9 },
+        bodyFont:  { family: 'IBM Plex Mono', size: 10 },
+      }},
+      scales: {
+        x: {
+          ticks: {
+            color: '#5a5a6a',
+            font: { family: 'IBM Plex Mono', size: 8 },
+            maxTicksLimit: 10,
+          },
+          grid: { color: '#18181c' },
+        },
+        y: {
+          ticks: {
+            color: '#5a5a6a',
+            font: { family: 'IBM Plex Mono', size: 8 },
+          },
+          grid: { color: '#18181c' },
+        },
+      },
+    },
+  });
+}
+
+// ============================================================
+// RENDER — KPI Strip
+// ============================================================
+
+function renderKpis(basket, percentile, proximity) {
+  const ctd = basket.find(b => b.is_ctd);
+  if (!ctd) return;
+
+  // KPI 1: CTD
+  document.getElementById('kpiCtd').textContent   = ctd.label;
+  document.getElementById('kpiCtdIr').textContent = `IR ${ctd.implied_repo_pct.toFixed(4)}%`;
+
+  // KPI 2: Net basis
+  const basis = percentile.today_net_basis_ticks;
+  document.getElementById('kpiBasis').textContent    = `${basis.toFixed(3)} ticks`;
+  document.getElementById('kpiBasisPct').textContent = `${percentile.percentile_rank}th percentile`;
+
+  // KPI 3: Spread
+  const spread = proximity.current_spread_bps;
+  document.getElementById('kpiSpread').textContent      = `${spread.toFixed(1)} bps`;
+  document.getElementById('kpiSpreadTrend').textContent = proximity.trend;
+
+  // KPI 4: Carry — populated after carry loads
+  // KPI 5: Risk flag
+  const riskEl = document.getElementById('kpiRisk');
+  riskEl.textContent = proximity.risk_flag;
+  riskEl.className   =
+    proximity.risk_flag === 'CRITICAL' ? 'kpi-value red'   :
+    proximity.risk_flag === 'ELEVATED' ? 'kpi-value amber' :
+                                          'kpi-value green';
+}
+
+// carry KPI filled separately after carry loads
+function updateCarryKpi(carry) {
+  const net = carry['3m'].net_carry_bps;
+  const el  = document.getElementById('kpiCarry');
+  el.textContent = `${net.toFixed(2)} bps`;
+  el.className   = `kpi-value ${net < 0 ? 'red' : 'green'}`;
+}
+
+// intercept carry render to also update KPI
+const _origRenderCarry = renderCarry;
+window.renderCarry = function(carry) {
+  _origRenderCarry(carry);
+  updateCarryKpi(carry);
+};
+
+// ============================================================
+// BOND CLICK — load carry + history for any clicked bond
+// ============================================================
+
+function selectBond(cusip, label) {
+  document.getElementById('carryLabel').textContent = label;
+  Promise.all([
+    fetch(`${API}/carry/${cusip}?contract=${CONTRACT}`).then(r => r.json()),
+    fetch(`${API}/history/${cusip}?contract=${CONTRACT}&days=90`).then(r => r.json()),
+  ]).then(([carry, history]) => {
+    renderCarry(carry);
+    renderChart(history);
+  });
+}
+
+// ============================================================
+// STATUS
+// ============================================================
+
+function setStatus(state) {
+  const dot  = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  dot.className  = `status-dot ${state}`;
+  text.textContent =
+    state === 'live'        ? 'LIVE'       :
+    state === 'error'       ? 'ERROR'      :
+    state === 'connecting'  ? 'LOADING'    : state.toUpperCase();
+}
+
+// ============================================================
+// CHART.JS — load from CDN then boot
+// ============================================================
+
+(function loadChartJs() {
+  const s = document.createElement('script');
+  s.src   = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';
+  s.onload = () => loadAll();
+  document.head.appendChild(s);
+})();
+
+// ============================================================
+// CHAT — MCP + Claude
+// ============================================================
+
+function toggleChat() {
+  const panel = document.getElementById('chatPanel');
+  panel.classList.toggle('open');
+}
+
+function askSuggestion(el) {
+  document.getElementById('chatInput').value = el.textContent;
+  // hide suggestions after first use
+  document.getElementById('chatSuggestions').style.display = 'none';
+  sendChat();
+}
+
+async function sendChat() {
+  const input   = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('chatSendBtn');
+  const msgs    = document.getElementById('chatMessages');
+  const question = input.value.trim();
+
+  if (!question) return;
+
+  // append user message
+  appendMessage('user', 'You', question);
+  input.value = '';
+  sendBtn.disabled = true;
+
+  // thinking indicator
+  const thinkingId = 'thinking-' + Date.now();
+  appendThinking(thinkingId);
+
+  try {
+    const res  = await fetch('http://localhost:5001/api/chat', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({question}),
+    });
+
+    const data = await res.json();
+    removeThinking(thinkingId);
+
+    if (data.error) {
+      appendMessage('error', 'Error', data.error);
+      return;
+    }
+
+    // render tool call log
+    if (data.tool_calls && data.tool_calls.length > 0) {
+      appendToolCallLog(data.tool_calls);
+    }
+
+    // render Claude's narrative
+    appendMessage('claude', 'Claude', data.narrative);
+
+  } catch (err) {
+    removeThinking(thinkingId);
+    appendMessage('error', 'Error', 'Could not reach API — is Flask running on :5001?');
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+function appendMessage(type, role, text) {
+  const msgs = document.getElementById('chatMessages');
+  const div  = document.createElement('div');
+  div.className = `chat-msg ${type}`;
+  div.innerHTML = `
+    <div class="chat-msg-role">${role}</div>
+    <div class="chat-msg-text">${escapeHtml(text)}</div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function appendToolCallLog(toolCalls) {
+  const msgs = document.getElementById('chatMessages');
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-msg';
+  wrap.innerHTML = '<div class="chat-msg-role">MCP Tool Calls</div>';
+
+  const log = document.createElement('div');
+  log.className = 'tool-call-log';
+
+  toolCalls.forEach((tc, i) => {
+    const inputStr  = Object.keys(tc.input).length
+      ? JSON.stringify(tc.input)
+      : 'no args';
+
+    const resultStr = typeof tc.result === 'object'
+      ? JSON.stringify(tc.result, null, 2)
+      : String(tc.result);
+
+    const item = document.createElement('div');
+    item.className = 'tool-call-item';
+    item.innerHTML = `
+      <div class="tool-call-header" onclick="toggleToolCall(this)">
+        <div class="tool-call-icon"></div>
+        <div class="tool-call-name">${tc.name}</div>
+        <div class="tool-call-input-label">${escapeHtml(inputStr)}</div>
+        <div class="tool-call-chevron">▶</div>
+      </div>
+      <div class="tool-call-result">${escapeHtml(resultStr)}</div>
+    `;
+    log.appendChild(item);
+  });
+
+  wrap.appendChild(log);
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function toggleToolCall(header) {
+  header.parentElement.classList.toggle('expanded');
+}
+
+function appendThinking(id) {
+  const msgs = document.getElementById('chatMessages');
+  const div  = document.createElement('div');
+  div.id        = id;
+  div.className = 'chat-msg chat-thinking';
+  div.innerHTML = `
+    <div class="thinking-dots">
+      <span></span><span></span><span></span>
+    </div>
+    Claude is calling MCP tools...
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function removeThinking(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+</script>
+
+<!-- ============================================================
+     CHAT PANEL — MCP + Claude integration
+     ============================================================ -->
+
+<!-- toggle button -->
+<button class="chat-toggle" onclick="toggleChat()">⬡ ASK CLAUDE</button>
+
+<!-- chat panel -->
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-header">
+    <div>
+      <div class="chat-title">Claude — MCP Basis Assistant</div>
+      <div class="chat-subtitle">via mcp_server/server.py · 8 tools</div>
+    </div>
+    <button class="chat-close" onclick="toggleChat()">✕</button>
+  </div>
+
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-msg">
+      <div class="chat-msg-role">System</div>
+      <div class="chat-msg-text">
+        Connected to CTD Basis Monitor via MCP stdio protocol.
+        Ask any question about the TYM26 basis — Claude will call
+        the relevant tools and synthesise a desk-ready brief.
+      </div>
+    </div>
+  </div>
+
+  <div class="chat-suggestions" id="chatSuggestions">
+    <span class="suggestion-chip" onclick="askSuggestion(this)">What's the TY basis this morning?</span>
+    <span class="suggestion-chip" onclick="askSuggestion(this)">Is the CTD at risk of switching?</span>
+    <span class="suggestion-chip" onclick="askSuggestion(this)">What happens if yields rise 50bps?</span>
+    <span class="suggestion-chip" onclick="askSuggestion(this)">Is carry positive today?</span>
+    <span class="suggestion-chip" onclick="askSuggestion(this)">How tight is the basis historically?</span>
+  </div>
+
+  <div class="chat-input-row">
+    <input
+      class="chat-input"
+      id="chatInput"
+      type="text"
+      placeholder="Ask about the TYM26 basis..."
+      onkeydown="if(event.key==='Enter') sendChat()"
+    >
+    <button class="chat-send" id="chatSendBtn" onclick="sendChat()">SEND</button>
+  </div>
+</div>
+
+</body>
+</html>
