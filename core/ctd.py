@@ -179,25 +179,38 @@ def ctd_transition_threshold(
 
 
 def basis_dv01(
-    ctd_dv01: float,
+    bond_dv01: float,
+    futures_dv01: float,
     conv_factor: float,
 ) -> float:
     """
     Compute the DV01 of a basis position (long bond, short futures).
 
-    A basis position is long 1 bond and short 1/CF futures contracts.
-    The net DV01 of this position is approximately zero by construction —
-    but residual basis DV01 arises from the imperfect CF hedge.
+    A basis position is: long 1 bond, short (1/CF) futures contracts.
+    The CF hedge eliminates most duration risk but leaves a residual —
+    the basis DV01 — because the futures contract is priced off the CTD,
+    not off this specific bond.
 
-    Basis DV01 = bond DV01 - (futures DV01 × conv_factor)
-    Since futures DV01 ≈ CTD DV01 / CF, this simplifies to ~0 for CTD.
+    Hedge construction:
+      To duration-neutral hedge 1 bond, short (1/CF) futures.
+      Hedge DV01 = (1/CF) * futures_dv01 * CF = futures_dv01
+
+    Residual:
+      basis_dv01 = bond_dv01 - futures_dv01
+
+    For the CTD itself this is near zero (the CF was calibrated to it).
+    For non-CTD basket members the residual is meaningful and represents
+    the rate sensitivity the CF hedge fails to cancel.
 
     Args:
-        ctd_dv01:    DV01 of the bond per $100 face value
-        conv_factor: conversion factor of the bond
+        bond_dv01:    DV01 of this bond per $100 face value
+        futures_dv01: DV01 of the futures contract (priced off the CTD)
+        conv_factor:  CME conversion factor of this bond
 
     Returns:
-        basis DV01 in price points (small residual, e.g. 0.0012)
+        basis DV01 in price points
+        Positive: bond is more rate-sensitive than the futures hedge
+        Negative: bond is less rate-sensitive than the futures hedge
     """
-    futures_dv01 = ctd_dv01 / conv_factor
-    return ctd_dv01 - (futures_dv01 * conv_factor)
+    hedge_dv01 = (1.0 / conv_factor) * futures_dv01 * conv_factor
+    return bond_dv01 - hedge_dv01
