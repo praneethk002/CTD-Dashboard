@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/26101270/README.md)
+
 # CTD Basis Monitor — TYM26
 
 A fixed income relative value morning workflow system for US Treasury futures basis desks. Replaces a 20–30 minute manual Bloomberg brief with a 10-second AI-driven summary, using Model Context Protocol (MCP) as the integration layer between live market data and Claude.
