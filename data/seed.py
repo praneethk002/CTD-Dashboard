@@ -125,7 +125,7 @@ def seed(days: int = 90, reset: bool = False, db_path: Path = None):
         if written % 10 == 0:
             ctd = basket_df[basket_df["is_ctd"]].iloc[0]
             print(
-                f"  {snapshot_dt}  yield={ytm*100:.3f}%  "
+                f"  {snapshot_dt}  yield={ytm_10y*100:.3f}%  "
                 f"CTD={ctd['label']}  IR={ctd['implied_repo_pct']:.2f}%"
             )
 
