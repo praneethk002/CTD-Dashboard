@@ -22,6 +22,7 @@ Conversion Factor (CF):
 No I/O. No database. Pure functions only.
 """
 
+import calendar
 from datetime import date
 from typing import TypedDict
 
@@ -73,12 +74,18 @@ def conversion_factor(coupon: float, maturity: date, delivery: date = DELIVERY_D
     priced at exactly 6% yield on the first day of the delivery month,
     rounded to 4 decimal places per CME convention.
 
-    Steps per CME methodology:
-      1. Compute remaining whole semi-annual periods N from delivery to maturity
-      2. Compute fractional period z (months into current coupon period / 6)
-      3. Price the bond at 6% using the standard Treasury pricing formula
-      4. Subtract accrued interest to get clean price
-      5. Round to 4 decimal places
+    CME methodology (two-case algorithm):
+      1. Count whole months from first day of delivery month to maturity month.
+      2. Round DOWN to the nearest 3-month multiple (CME spec).
+      3. Express as n_periods whole semi-annual periods + z_months (0 or 3).
+      4. Case z_months == 0 (no stub):
+           pv = annuity(n_periods, 3%) + discount(n_periods, 3%)
+           accrued = 0
+      5. Case z_months == 3 (3-month stub):
+           Price at stub date (3 months out) = first_coupon + annuity + discount
+           Discount back 0.5 periods: pv = pv_at_stub * v^0.5
+           accrued = semi_coupon * 0.5  (3 months into coupon period)
+      6. CF = pv - accrued, rounded to 4 decimal places.
 
     Args:
         coupon:   annual coupon rate as decimal (e.g. 0.04375)
@@ -88,32 +95,39 @@ def conversion_factor(coupon: float, maturity: date, delivery: date = DELIVERY_D
     Returns:
         conversion factor as float (e.g. 0.9432)
     """
-    c = coupon / 2          # semi-annual coupon per $1 face value
-    y = CF_STANDARD_YIELD / 2   # semi-annual discount rate (3%)
+    semi_coupon = coupon / 2              # semi-annual coupon per $1 face value
+    semi_yield  = CF_STANDARD_YIELD / 2  # 3% semi-annual discount rate
+    v           = 1.0 / (1.0 + semi_yield)
 
-    # months remaining from delivery to maturity
+    # whole months from first day of delivery month to maturity month
     months_remaining = (
         (maturity.year - delivery.year) * 12
         + (maturity.month - delivery.month)
     )
 
-    # whole semi-annual coupon periods remaining
-    N = months_remaining // 6
+    # CME: round DOWN to the nearest 3-month multiple
+    months_rounded = (months_remaining // 3) * 3
 
-    # fractional period: months elapsed in current coupon period / 6
-    z = (months_remaining % 6) / 6
+    n_periods = months_rounded // 6  # whole semi-annual coupon periods
+    z_months  = months_rounded % 6   # 0 or 3 months stub
 
-    # present value of coupons (annuity) + present value of principal
-    # discounted back N periods, then forward-adjusted for fractional period
-    if N == 0:
-        pv = (c + 1.0) / (1 + y) ** (1 - z)
+    annuity = (
+        semi_coupon * (1.0 - v ** n_periods) / semi_yield
+        if n_periods > 0
+        else 0.0
+    )
+
+    if z_months == 0:
+        # no stub — evaluated at a coupon date, no accrued
+        pv      = annuity + v ** n_periods
+        accrued = 0.0
     else:
-        annuity = c * (1 - (1 + y) ** (-N)) / y
-        pv = (annuity + (1 + y) ** (-N)) * (1 + y) ** z
+        # 3-month stub — next coupon is 3 months (half a period) away
+        # value at stub date = immediate coupon + remaining annuity + principal
+        pv_at_stub = semi_coupon + annuity + v ** n_periods
+        # discount back half a semi-annual period
+        pv      = pv_at_stub * v ** 0.5
+        # accrued at delivery = 3 months into a 6-month coupon period
+        accrued = semi_coupon * 0.5
 
-    # subtract accrued interest for the fractional period
-    accrued = c * z
-
-    cf = pv - accrued
-
-    return round(cf, 4)
+    return round(pv - accrued, 4)

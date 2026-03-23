@@ -331,6 +331,17 @@ class BasisDB:
 
         return dict(row) if row else None
 
+    def get_status(self) -> dict:
+        """Return database status: row count and latest snapshot date."""
+        with self._connect() as conn:
+            total_rows = conn.execute(
+                "SELECT COUNT(*) FROM basis_snapshots"
+            ).fetchone()[0]
+            latest = conn.execute(
+                "SELECT MAX(snapshot_dt) FROM basis_snapshots"
+            ).fetchone()[0]
+        return {"status": "ok", "total_rows": total_rows, "latest_snapshot": latest}
+
     def reset(self):
         """Drop and recreate all tables. Used by seed script."""
         with self._connect() as conn:

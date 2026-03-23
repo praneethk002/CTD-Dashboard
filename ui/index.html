@@ -1083,7 +1083,9 @@ canvas#basisChart {
    No framework. No build step. Native fetch + DOM manipulation.
    ============================================================ */
 
-const API = 'http://localhost:5001/api';
+// Change API_BASE to match your deployment host if not running locally.
+const API_BASE = 'http://localhost:5001';
+const API      = `${API_BASE}/api`;
 const CONTRACT = 'TYM26';
 
 // store CTD cusip globally so carry/history can reference it
@@ -1503,7 +1505,7 @@ async function sendChat() {
   appendThinking(thinkingId);
 
   try {
-    const res  = await fetch('http://localhost:5001/api/chat', {
+    const res  = await fetch(`${API_BASE}/api/chat`, {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({question}),

@@ -54,8 +54,10 @@ from mcp_server.server import (
 )
 
 app  = Flask(__name__)
-CORS(app)
+CORS(app, origins=["http://localhost:5001", "http://localhost:3000", "http://127.0.0.1:5001"])
 db   = BasisDB()
+
+CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # path to MCP server entry point
 MCP_SERVER_PATH = str(Path(__file__).parent.parent / "mcp_server" / "server.py")
@@ -167,7 +169,7 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
             messages = [{"role": "user", "content": question}]
 
             response = anthropic_client.messages.create(
-                model      = "claude-sonnet-4-20250514",
+                model      = CLAUDE_MODEL,
                 max_tokens = 1024,
                 system     = SYSTEM_PROMPT,
                 tools      = anthropic_tools,
@@ -226,7 +228,7 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
 
                 # next Claude turn with tool results
                 response = anthropic_client.messages.create(
-                    model      = "claude-sonnet-4-20250514",
+                    model      = CLAUDE_MODEL,
                     max_tokens = 1024,
                     system     = SYSTEM_PROMPT,
                     tools      = anthropic_tools,
@@ -251,13 +253,8 @@ def _contract() -> str:
 
 @app.get("/api/status")
 def status():
-    import sqlite3
     try:
-        conn   = sqlite3.connect(str(Path(__file__).parent.parent / "basis_monitor.db"))
-        rows   = conn.execute("SELECT COUNT(*) FROM basis_snapshots").fetchone()[0]
-        latest = conn.execute("SELECT MAX(snapshot_dt) FROM basis_snapshots").fetchone()[0]
-        conn.close()
-        return jsonify({"status": "ok", "total_rows": rows, "latest_snapshot": latest})
+        return jsonify(db.get_status())
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -292,7 +289,7 @@ def proximity():
 @app.get("/api/scenarios")
 def scenarios():
     shifts_raw = request.args.get("shifts")
-    shifts     = [int(x) for x in shifts_raw.split(",")] if shifts_raw else None
+    shifts     = [int(x) for x in shifts_raw.split(",")] if shifts_raw and shifts_raw.strip() else None
     return jsonify(run_scenario_grid(_contract(), shifts))
 
 

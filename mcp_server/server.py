@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastmcp import FastMCP
 
 from core.basket import get_basket, conversion_factor, DELIVERY_DATE
-from core.carry import implied_repo as compute_implied_repo
+from core.carry import coupon_income_act_act, implied_repo as compute_implied_repo
 from core.ctd import rank_basket, ctd_transition_threshold
 from core.pricing import accrued_interest, price_bond
 from core.scenario import scenario_grid, ctd_by_scenario
@@ -393,7 +393,7 @@ def get_carry_roll(
     """
     Decompose carry for a bond over 3-month and 6-month horizons.
 
-    Carry = coupon income (ACT/365) - repo financing cost (ACT/360)
+    Carry = coupon income (ACT/ACT) - repo financing cost (ACT/360)
     Positive carry = trade earns money while held.
     Negative carry = trade costs money — common when repo rate > coupon yield.
 
@@ -415,27 +415,28 @@ def get_carry_roll(
     if not row:
         return {"error": f"CUSIP {cusip} not found in {contract} basket"}
 
-    rate      = repo_rate if repo_rate is not None else row["repo_rate"]
+    rate       = repo_rate if repo_rate is not None else row["repo_rate"]
     settlement = date.today()
 
-    basket    = get_basket()
-    bond      = next(b for b in basket if b["cusip"] == cusip)
+    basket = get_basket()
+    bond   = next(b for b in basket if b["cusip"] == cusip)
 
-    from core.carry import carry as compute_carry
+    ai          = accrued_interest(bond["coupon"], bond["maturity"], settlement)
+    dirty_price = row["cash_price"] + ai
 
     result = {"label": row["label"], "cusip": cusip, "repo_rate_pct": round(rate * 100, 3)}
 
     for label, days in [("3m", 91), ("6m", 182)]:
-        coupon_income   = bond["coupon"] * 100 * (days / 365)
-        financing_cost  = row["cash_price"] * rate * (days / 360)
-        net             = coupon_income - financing_cost
+        ci             = coupon_income_act_act(bond["coupon"], bond["maturity"], settlement, days)
+        financing_cost = dirty_price * rate * (days / 360)
+        net            = ci - financing_cost
 
         result[label] = {
             "days":            days,
-            "coupon_income":   round(coupon_income, 4),
+            "coupon_income":   round(ci, 4),
             "financing_cost":  round(financing_cost, 4),
             "net_carry":       round(net, 4),
-            "net_carry_bps":   round(net * 100, 2),   # annualised approximation
+            "net_carry_bps":   round(net * 100, 2),
         }
 
     result["implied_repo_pct"] = round(row["implied_repo"] * 100, 4)
