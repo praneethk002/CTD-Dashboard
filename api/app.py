@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import anthropic
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -54,8 +54,20 @@ from mcp_server.server import (
 )
 
 app  = Flask(__name__)
-CORS(app, origins=["http://localhost:5001", "http://localhost:3000", "http://127.0.0.1:5001"])
+CORS(app)
 db   = BasisDB()
+
+# Auto-seed database if empty (needed for ephemeral disks like Render free tier)
+def _auto_seed():
+    try:
+        status = db.get_status()
+        if status.get("total_rows", 0) == 0:
+            from data.seed import seed
+            seed(days=90, reset=True)
+    except Exception:
+        pass
+
+_auto_seed()
 
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
@@ -318,6 +330,18 @@ def carry(cusip):
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid 'repo_rate' parameter"}), 400
     return jsonify(get_carry_roll(cusip, _contract(), rate))
+
+
+# ------------------------------------------------------------------
+# Serve frontend — single-process deployment
+# ------------------------------------------------------------------
+
+UI_DIR = str(Path(__file__).parent.parent / "ui")
+
+
+@app.route("/")
+def serve_ui():
+    return send_from_directory(UI_DIR, "index.html")
 
 
 # ------------------------------------------------------------------

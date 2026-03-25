@@ -1083,8 +1083,10 @@ canvas#basisChart {
    No framework. No build step. Native fetch + DOM manipulation.
    ============================================================ */
 
-// Change API_BASE to match your deployment host if not running locally.
-const API_BASE = 'http://localhost:5001';
+// Auto-detect API base: use current origin when deployed, localhost for dev.
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5001'
+  : window.location.origin;
 const API      = `${API_BASE}/api`;
 const CONTRACT = 'TYM26';
 
