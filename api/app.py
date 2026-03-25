@@ -154,8 +154,8 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
         command = sys.executable,   # use same Python interpreter
         args    = [MCP_SERVER_PATH],
         env     = {
-            "PATH": os.environ.get("PATH", ""),
-            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+            k: v for k, v in os.environ.items()
+            if k not in ("ANTHROPIC_API_KEY", "FRED_API_KEY")
         },
     )
 
