@@ -3,8 +3,8 @@ services:
     name: ctd-dashboard
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn api.app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python -m gunicorn api.app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
