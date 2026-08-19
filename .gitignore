@@ -23,6 +23,9 @@ env/
 # Database — regenerate with: python -m data.seed --reset
 basis_monitor.db
 
+# Database — regenerate with: python -m data.portfolio_seed --reset
+portfolio_analytics.db
+
 # IDE
 .vscode/
 .idea/

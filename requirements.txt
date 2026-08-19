@@ -1,0 +1,9 @@
+numpy
+scipy
+pandas
+flask
+flask-cors
+anthropic
+mcp
+fastmcp
+pytest

@@ -208,6 +208,53 @@ def accrued_interest(
     return (coupon / 2) * (days_since_last / days_in_period) * 100
 
 
+def coupon_cashflows_between(
+    coupon: float,
+    maturity: date,
+    begin: date,
+    end: date,
+) -> float:
+    """
+    Total coupon cash paid strictly after `begin` and on/before `end`.
+
+    Needed because accrued_interest() resets to ~0 immediately after each
+    coupon date — a plain begin-vs-end dirty-price comparison silently drops
+    any coupon cash paid mid-period. Total return over a period must add
+    this back: total_return = (end_dirty + coupon_cash_between - begin_dirty)
+    / begin_dirty.
+
+    Args:
+        coupon:   annual coupon rate as decimal
+        maturity: bond maturity date
+        begin:    period start date (exclusive)
+        end:      period end date (inclusive)
+
+    Returns:
+        total coupon cash paid in the window, as percentage of par
+    """
+    if begin >= maturity:
+        return 0.0
+
+    _, next_coupon = _coupon_dates(maturity, begin)
+    semi_coupon = (coupon / 2) * 100
+    total = 0.0
+
+    d = next_coupon
+    while d <= end and d <= maturity:
+        total += semi_coupon
+        m = d.month + 6
+        y = d.year + (m - 1) // 12
+        m = ((m - 1) % 12) + 1
+        try:
+            d = date(y, m, d.day)
+        except ValueError:
+            import calendar
+            last_day = calendar.monthrange(y, m)[1]
+            d = date(y, m, last_day)
+
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------

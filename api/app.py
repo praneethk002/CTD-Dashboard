@@ -3,17 +3,19 @@ api/app.py
 
 Flask API — two responsibilities:
 
-1. STATIC ENDPOINTS (Tools 1-8 direct)
-   Fast endpoints for the dashboard panels.
-   These call MCP tool functions directly as Python imports
-   so the dashboard loads instantly on page open.
+1. STATIC ENDPOINTS (direct calls, no MCP protocol)
+   Fast endpoints for the dashboard panels — the 8 CTD tools imported
+   directly below, plus the /api/portfolio/* routes further down which
+   call core/reporting.py directly rather than importing MCP tool
+   functions (same effect: fetch via data/, compute via core/, no MCP
+   round-trip needed for a same-process call).
 
 2. /api/chat  — THE REAL MCP ENDPOINT
    This is where MCP protocol actually runs.
    When the analyst asks a question:
      - Flask spawns the MCP server as a subprocess
      - Connects via real MCP stdio protocol (ClientSession + stdio_client)
-     - Calls session.list_tools() to discover all 8 tools
+     - Calls session.list_tools() to discover all 12 tools (8 CTD + 4 portfolio)
      - Sends tools + question to Claude via Anthropic API
      - Claude decides which tools to call (returns tool_use blocks)
      - Flask calls session.call_tool() for each — real MCP protocol calls
@@ -41,7 +43,10 @@ from flask_cors import CORS
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from core.commentary import generate_commentary
+from core.reporting import generate_report
 from data.db import BasisDB
+from data.portfolio_db import PortfolioDB
 from mcp_server.server import (
     get_basis_history,
     get_basis_percentile,
@@ -54,24 +59,53 @@ from mcp_server.server import (
 )
 
 app  = Flask(__name__)
-CORS(app)
+# allow_private_network=True: Chrome's Private Network Access policy blocks a
+# public HTTPS page (e.g. a Lovable preview) from fetching a private-network
+# target (localhost) unless the CORS preflight explicitly opts in via
+# Access-Control-Allow-Private-Network: true. Without this, the browser
+# hangs/blocks the request silently — this is a local dev API with no
+# sensitive data, so opting in here is safe.
+CORS(app, allow_private_network=True)
 db   = BasisDB()
+pf_db = PortfolioDB()
 
 # path to MCP server entry point
 MCP_SERVER_PATH = str(Path(__file__).parent.parent / "mcp_server" / "server.py")
 
 # system prompt — tells Claude what context it's operating in
-SYSTEM_PROMPT = """You are a fixed income analyst assistant for a US Treasury futures basis desk.
-You have access to 8 tools that query a live CTD (Cheapest-to-Deliver) basis monitor database.
+SYSTEM_PROMPT = """You are a fixed income analyst assistant with two areas of coverage:
+
+1. A US Treasury futures CTD (Cheapest-to-Deliver) basis monitor — 8 tools
+   (get_current_basket, get_basis_history, get_basis_percentile,
+   get_ctd_transitions, get_transition_proximity, run_scenario_grid,
+   get_ctd_transition_threshold, get_carry_roll). Active contract: TYM26
+   (10-year Treasury futures, June 2026 delivery).
+
+2. A synthetic demo Fixed Income Performance & Analytics Workbench — 4
+   tools (get_portfolio_performance, get_portfolio_attribution,
+   get_portfolio_controls, get_portfolio_report) covering an 8-security
+   demo US Treasury portfolio. This is NOT real account data. Horizons are
+   1D/MTD/QTD/YTD. When asked "why" the portfolio did something, call
+   get_portfolio_attribution (or get_portfolio_report for the full
+   picture) rather than guessing from performance numbers alone. If asked
+   whether the numbers can be trusted, call get_portfolio_controls before
+   answering — do not assert data quality without checking.
 
 When answering questions:
-- Always call the relevant tools to get live data before answering
-- Be concise and precise — this is a trading desk, not a research report
+- Always call the relevant tools to get live data before answering — never
+  invent a number, especially a portfolio return, contribution, or control
+  result; every figure must come from a tool call
+- Be concise and precise — this is a desk brief, not a research report
 - Lead with the actionable signal, then the supporting data
-- Use fixed income terminology correctly (basis points, ticks, implied repo, etc.)
-- If the risk flag is ELEVATED or CRITICAL, make that the first thing you say
-
-The active contract is TYM26 (10-year Treasury futures, June 2026 delivery).
+- Use fixed income terminology correctly (basis points, ticks, implied
+  repo, duration, convexity, active return, etc.)
+- For the CTD monitor: if the risk flag is ELEVATED or CRITICAL, make that
+  the first thing you say
+- For the portfolio workbench: if get_portfolio_controls reports status
+  REVIEW, mention that before stating any return or attribution figure —
+  don't present numbers as settled if there's an open data-quality issue
+- If price_effect_approx / residual come up, be clear that the price
+  effect is a duration+convexity approximation, not an exact repricing
 """
 
 
@@ -306,6 +340,208 @@ def carry(cusip):
     repo_rate = request.args.get("repo_rate")
     rate      = float(repo_rate) if repo_rate else None
     return jsonify(get_carry_roll(cusip, _contract(), rate))
+
+
+# ------------------------------------------------------------------
+# Fixed Income Performance & Analytics Workbench endpoints
+#
+# Business logic lives entirely in core/ (returns, attribution, controls,
+# reporting, commentary) and data/portfolio_db.py — routes only fetch via
+# PortfolioDB and hand off to core.reporting.generate_report(), mirroring
+# how the CTD routes above stay thin wrappers around mcp_server.server /
+# core functions rather than embedding calculations inline.
+# ------------------------------------------------------------------
+
+VALID_HORIZONS = {"1D", "MTD", "QTD", "YTD"}
+
+
+def _pf_horizon() -> str:
+    horizon = request.args.get("horizon", "YTD")
+    if horizon not in VALID_HORIZONS:
+        raise ValueError(f"Invalid horizon '{horizon}' — must be one of {sorted(VALID_HORIZONS)}")
+    return horizon
+
+
+def _pf_load(horizon: str):
+    """Fetch everything generate_report() needs for one horizon."""
+    begin, end = pf_db.resolve_horizon_dates(horizon)
+    securities = pf_db.get_securities()
+    snap_begin = pf_db.get_snapshot_all(begin)
+    snap_end   = pf_db.get_snapshot_all(end)
+    history    = pf_db.get_history_all(begin, end)
+    return securities, snap_begin, snap_end, history
+
+
+def _serialize_security(sec: dict, snap: dict = None) -> dict:
+    out = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in sec.items()}
+    if snap:
+        out.update({
+            "price": snap.get("price"), "yield": snap.get("yield"),
+            "accrued_interest": snap.get("accrued_interest"),
+            "modified_duration": snap.get("modified_duration"),
+            "convexity": snap.get("convexity"), "dv01": snap.get("dv01"),
+        })
+    return out
+
+
+@app.get("/api/portfolio/summary")
+def portfolio_summary():
+    from core.reporting import compute_risk_metrics
+
+    securities = pf_db.get_securities()
+    latest = pf_db.get_latest_date()
+    if latest is None:
+        return jsonify({"error": "No portfolio data — run: python -m data.portfolio_seed --reset"}), 500
+
+    snapshot = pf_db.get_snapshot_all(latest)
+    risk = compute_risk_metrics(securities, snapshot, "portfolio_weight")
+    holdings = [_serialize_security(sec, snapshot.get(sec["security_id"])) for sec in securities]
+
+    return jsonify({"as_of": latest.isoformat(), "risk_metrics": risk, "holdings": holdings})
+
+
+@app.get("/api/portfolio/performance")
+def portfolio_performance():
+    try:
+        horizon = _pf_horizon()
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    report = generate_report(securities, snap_begin, snap_end, history, horizon)
+    return jsonify({
+        "horizon": horizon, "as_of": report["as_of"],
+        "performance": report["performance"], "risk_metrics": report["risk_metrics"],
+    })
+
+
+@app.get("/api/portfolio/contributors")
+def portfolio_contributors():
+    try:
+        horizon = _pf_horizon()
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    report = generate_report(securities, snap_begin, snap_end, history, horizon)
+    return jsonify({"horizon": horizon, "contributors": report["contributors"]})
+
+
+@app.get("/api/portfolio/attribution")
+def portfolio_attribution():
+    level = request.args.get("level", "bucket")
+    if level not in ("portfolio", "bucket", "security"):
+        return jsonify({"error": "level must be one of: portfolio, bucket, security"}), 400
+
+    try:
+        horizon = _pf_horizon()
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    report = generate_report(securities, snap_begin, snap_end, history, horizon)
+
+    if level == "portfolio":
+        payload = report["executive_summary"]
+    elif level == "security":
+        payload = report["contributors"]
+    else:
+        payload = report["attribution_summary"]
+
+    return jsonify({"horizon": horizon, "level": level, "attribution": payload})
+
+
+@app.get("/api/portfolio/holdings")
+def portfolio_holdings():
+    securities = pf_db.get_securities()
+    latest = pf_db.get_latest_date()
+    if latest is None:
+        return jsonify({"error": "No portfolio data — run: python -m data.portfolio_seed --reset"}), 500
+
+    snapshot = pf_db.get_snapshot_all(latest)
+    holdings = [_serialize_security(sec, snapshot.get(sec["security_id"])) for sec in securities]
+    return jsonify({"as_of": latest.isoformat(), "holdings": holdings})
+
+
+@app.get("/api/portfolio/controls")
+def portfolio_controls():
+    from core.controls import run_all_controls
+
+    securities = pf_db.get_securities()
+    latest = pf_db.get_latest_date()
+    earliest = pf_db.get_earliest_date()
+    if latest is None or earliest is None:
+        return jsonify({"error": "No portfolio data — run: python -m data.portfolio_seed --reset"}), 500
+
+    snapshot = pf_db.get_snapshot_all(latest)
+    history = pf_db.get_history_all(earliest, latest)
+    return jsonify(run_all_controls(securities, snapshot, history))
+
+
+@app.get("/api/portfolio/report")
+def portfolio_report():
+    try:
+        horizon = _pf_horizon()
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify(generate_report(securities, snap_begin, snap_end, history, horizon))
+
+
+@app.get("/api/portfolio/security/<security_id>")
+def portfolio_security(security_id):
+    from core.attribution import security_contribution
+
+    security = pf_db.get_security(security_id)
+    if security is None:
+        return jsonify({"error": f"Unknown security_id '{security_id}'"}), 404
+
+    try:
+        horizon = _pf_horizon()
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    report = generate_report(securities, snap_begin, snap_end, history, horizon)
+
+    contribution = next(
+        (c for group in (report["contributors"]["top_positive"], report["contributors"]["top_negative"])
+         for c in group if c["security_id"] == security_id),
+        None,
+    )
+    if contribution is None and security_id in snap_begin and security_id in snap_end:
+        contribution = security_contribution(
+            security, snap_begin[security_id], snap_end[security_id], "portfolio_weight"
+        )
+
+    earliest = pf_db.get_earliest_date()
+    latest = pf_db.get_latest_date()
+    full_history = pf_db.get_history(security_id, earliest, latest)
+
+    return jsonify({
+        "security": _serialize_security(security),
+        "horizon": horizon,
+        "contribution": contribution,
+        "history": [{**h, "date": h["date"].isoformat()} for h in full_history],
+    })
+
+
+@app.post("/api/portfolio/commentary")
+def portfolio_commentary():
+    body = request.get_json(silent=True) or {}
+    horizon = body.get("horizon", "YTD")
+    if horizon not in VALID_HORIZONS:
+        return jsonify({"error": f"Invalid horizon '{horizon}' — must be one of {sorted(VALID_HORIZONS)}"}), 400
+
+    try:
+        securities, snap_begin, snap_end, history = _pf_load(horizon)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    report = generate_report(securities, snap_begin, snap_end, history, horizon)
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    return jsonify(generate_commentary(report, api_key))
 
 
 # ------------------------------------------------------------------

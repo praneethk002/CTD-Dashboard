@@ -1,16 +1,19 @@
 """
 mcp_server/server.py
 
-FastMCP server exposing 8 tools for CTD basis analytics.
+FastMCP server exposing 12 tools: 8 for the CTD basis engine, plus 4 for
+the Fixed Income Performance & Analytics Workbench (portfolio return,
+attribution, data-quality controls, and the full structured report).
 
-This is the centrepiece of the system. Claude connects to this server
-via MCP and calls these tools to answer morning brief questions like:
-  "What's the TY basis this morning?"
-  "Is the CTD at risk of switching?"
-  "What happens to our position if yields rise 50bps?"
+Claude connects to this server via MCP and calls these tools to answer
+morning-brief-style questions — either about the Treasury futures basis
+("Is the CTD at risk of switching?") or about the demo portfolio
+("Why did the portfolio underperform this month?").
 
-All 8 tools are READ-ONLY — they query the SQLite database and return
-structured data. No tool writes to the database.
+All 12 tools are READ-ONLY — they query SQLite (via BasisDB / PortfolioDB)
+and return structured data computed by core/. No tool writes to a database,
+and no tool performs a financial calculation itself — that's core/'s job;
+these are thin wrappers.
 
 The MCP server runs over stdio transport, which means Claude connects
 to it by spawning this process as a subprocess. This is the standard
@@ -19,7 +22,7 @@ MCP pattern for local tool servers.
 Transport: stdio (standard MCP local pattern)
 Entry:     python -m mcp_server.server
 
-The 8 tools:
+CTD basis engine tools:
   1. get_current_basket         — full basket ranked by implied repo
   2. get_basis_history          — 90-day net basis series for a bond
   3. get_basis_percentile       — where today's CTD basis sits historically
@@ -28,6 +31,13 @@ The 8 tools:
   6. run_scenario_grid          — basket reranked under yield shocks
   7. get_ctd_transition_threshold — exact F* in closed form
   8. get_carry_roll             — carry decomposition over 3M/6M horizon
+
+Fixed Income Performance & Analytics Workbench tools:
+  9.  get_portfolio_performance  — portfolio/benchmark/active return + risk
+  10. get_portfolio_attribution  — drilldown: portfolio / bucket / security
+  11. get_portfolio_controls     — data-quality PASS/REVIEW + issue list
+  12. get_portfolio_report       — full structured report (performance +
+                                   attribution + controls + contributors)
 """
 
 import sys
@@ -43,12 +53,17 @@ from core.basket import get_basket, conversion_factor, DELIVERY_DATE
 from core.carry import implied_repo as compute_implied_repo
 from core.ctd import rank_basket, ctd_transition_threshold
 from core.pricing import accrued_interest, price_bond
+from core.reporting import generate_report
 from core.scenario import scenario_grid, ctd_by_scenario
 from data.db import BasisDB
 from data.fred_client import get_yield_curve, build_basket_yields
+from data.portfolio_db import PortfolioDB
 
-mcp = FastMCP("CTD Basis Monitor")
-db  = BasisDB()
+mcp   = FastMCP("CTD Basis Monitor")
+db    = BasisDB()
+pf_db = PortfolioDB()
+
+PF_VALID_HORIZONS = {"1D", "MTD", "QTD", "YTD"}
 
 
 # ------------------------------------------------------------------
@@ -441,6 +456,163 @@ def get_carry_roll(
     result["implied_repo_pct"] = round(row["implied_repo"] * 100, 4)
 
     return result
+
+
+# ------------------------------------------------------------------
+# Fixed Income Performance & Analytics Workbench tools
+# ------------------------------------------------------------------
+
+def _pf_generate_report(horizon: str) -> dict:
+    """Fetch via PortfolioDB, compute via core.reporting.generate_report — same
+    pattern api/app.py's /api/portfolio/* routes use, kept independent here
+    so this MCP server has no dependency on the Flask app."""
+    if horizon not in PF_VALID_HORIZONS:
+        raise ValueError(f"horizon must be one of {sorted(PF_VALID_HORIZONS)}, got '{horizon}'")
+
+    begin, end = pf_db.resolve_horizon_dates(horizon)
+    securities = pf_db.get_securities()
+    snap_begin = pf_db.get_snapshot_all(begin)
+    snap_end   = pf_db.get_snapshot_all(end)
+    history    = pf_db.get_history_all(begin, end)
+
+    return generate_report(securities, snap_begin, snap_end, history, horizon)
+
+
+# ------------------------------------------------------------------
+# Tool 9: get_portfolio_performance
+# ------------------------------------------------------------------
+
+@mcp.tool()
+def get_portfolio_performance(horizon: str = "YTD") -> dict:
+    """
+    Return the demo portfolio's return, benchmark return, and active
+    return for one horizon, plus current risk metrics.
+
+    This is a SYNTHETIC demo portfolio (8 US Treasury securities), not a
+    real account. The portfolio has no external cash flows in this window,
+    so this is a straightforward beginning-vs-ending market value return
+    with mid-period coupon cash added back — see core/returns.py for the
+    exact methodology.
+
+    Args:
+        horizon: one of "1D", "MTD", "QTD", "YTD" (default "YTD")
+
+    Returns:
+        dict with:
+          horizon, as_of,
+          performance: {portfolio_return, benchmark_return, active_return_bps, ...}
+          risk_metrics: {weighted_modified_duration, weighted_yield, dv01_usd}
+    """
+    try:
+        report = _pf_generate_report(horizon)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    return {
+        "horizon": horizon,
+        "as_of": report["as_of"],
+        "performance": report["performance"],
+        "risk_metrics": report["risk_metrics"],
+    }
+
+
+# ------------------------------------------------------------------
+# Tool 10: get_portfolio_attribution
+# ------------------------------------------------------------------
+
+@mcp.tool()
+def get_portfolio_attribution(horizon: str = "YTD", level: str = "bucket") -> dict:
+    """
+    Explain WHY the demo portfolio returned what it did over one horizon.
+
+    Each security's return is split into carry (exact income), an
+    explicitly-APPROXIMATED yield-driven price effect (duration +
+    convexity), and a visible residual — never forced to zero. Use
+    level="bucket" for the maturity-bucket drilldown with a
+    portfolio-vs-benchmark comparison, level="security" for the top
+    contributor/detractor list, or level="portfolio" for a one-line
+    executive summary.
+
+    Args:
+        horizon: one of "1D", "MTD", "QTD", "YTD" (default "YTD")
+        level:   "portfolio" | "bucket" | "security" (default "bucket")
+
+    Returns:
+        dict with horizon, level, and attribution (shape depends on level)
+    """
+    if level not in ("portfolio", "bucket", "security"):
+        return {"error": "level must be one of: portfolio, bucket, security"}
+
+    try:
+        report = _pf_generate_report(horizon)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    if level == "portfolio":
+        payload = report["executive_summary"]
+    elif level == "security":
+        payload = report["contributors"]
+    else:
+        payload = report["attribution_summary"]
+
+    return {"horizon": horizon, "level": level, "attribution": payload}
+
+
+# ------------------------------------------------------------------
+# Tool 11: get_portfolio_controls
+# ------------------------------------------------------------------
+
+@mcp.tool()
+def get_portfolio_controls() -> dict:
+    """
+    Run the demo portfolio's data-quality controls and return the result.
+
+    All 11 rules are deterministic Python (stale prices, missing
+    classification, weight breaks, abnormal returns, etc.) — no LLM is
+    ever asked to judge whether the underlying financial data is correct.
+    Status is PASS or REVIEW, never a wall of individual green checks.
+
+    Returns:
+        dict with status ("PASS" | "REVIEW") and issues (list of
+        {issue, security_id, reason, severity, suggested_action})
+    """
+    securities = pf_db.get_securities()
+    latest = pf_db.get_latest_date()
+    earliest = pf_db.get_earliest_date()
+    if latest is None or earliest is None:
+        return {"error": "No portfolio data — run: python -m data.portfolio_seed --reset"}
+
+    snapshot = pf_db.get_snapshot_all(latest)
+    history = pf_db.get_history_all(earliest, latest)
+
+    from core.controls import run_all_controls
+    return run_all_controls(securities, snapshot, history)
+
+
+# ------------------------------------------------------------------
+# Tool 12: get_portfolio_report
+# ------------------------------------------------------------------
+
+@mcp.tool()
+def get_portfolio_report(horizon: str = "YTD") -> dict:
+    """
+    Return the FULL structured report for the demo portfolio over one
+    horizon — everything get_portfolio_performance, get_portfolio_attribution,
+    and get_portfolio_controls return, combined into a single object. Use
+    this when a question needs the whole picture (e.g. drafting a morning
+    commentary) rather than one specific slice.
+
+    Args:
+        horizon: one of "1D", "MTD", "QTD", "YTD" (default "YTD")
+
+    Returns:
+        dict with horizon, as_of, performance, risk_metrics, contributors,
+        attribution_summary, data_quality, executive_summary
+    """
+    try:
+        return _pf_generate_report(horizon)
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 # ------------------------------------------------------------------
