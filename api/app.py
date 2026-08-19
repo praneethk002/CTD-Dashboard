@@ -79,6 +79,13 @@ def _auto_seed():
     except Exception:
         pass
 
+    try:
+        if pf_db.get_latest_date() is None:
+            from data.portfolio_seed import seed as seed_portfolio
+            seed_portfolio(reset=True)
+    except Exception:
+        pass
+
 _auto_seed()
 
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
