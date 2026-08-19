@@ -21,13 +21,52 @@ Key concepts:
                  The bond with the HIGHEST implied repo is the CTD.
 
 Day count conventions (US Treasury market standard):
-  Coupon accrual: ACT/365
+  Coupon accrual: ACT/ACT (ICMA) — consistent with pricing.py accrued_interest()
   Repo financing: ACT/360
 
 No I/O. No database. Pure functions only.
 """
 
-from datetime import date
+from datetime import date, timedelta
+
+from core.pricing import accrued_interest, _coupon_dates
+
+
+def coupon_income_act_act(
+    coupon: float,
+    maturity: date,
+    settlement: date,
+    days: int,
+) -> float:
+    """
+    Compute coupon income over a holding period using ACT/ACT day count.
+
+    Income = change in accrued interest over the period, plus any full
+    coupon payment received if a coupon date falls within the period.
+
+    Args:
+        coupon:     annual coupon rate as decimal (e.g. 0.04375)
+        maturity:   bond maturity date
+        settlement: start of holding period
+        days:       holding period in calendar days
+
+    Returns:
+        coupon income in price points per $100 face value
+    """
+    delivery = settlement + timedelta(days=days)
+
+    ai_today    = accrued_interest(coupon, maturity, settlement)
+    ai_delivery = accrued_interest(coupon, maturity, delivery)
+
+    # Check whether a coupon payment falls within the holding period
+    _, next_coupon = _coupon_dates(maturity, settlement)
+
+    if settlement < next_coupon <= delivery:
+        # A full semi-annual coupon was received during the holding period.
+        # Income = full coupon - accrued surrendered at purchase + accrued at delivery.
+        return (coupon / 2) * 100 - ai_today + ai_delivery
+
+    return ai_delivery - ai_today
 
 
 def gross_basis(
@@ -39,10 +78,6 @@ def gross_basis(
     Compute gross basis.
 
     Gross basis = cash price - (futures price × conversion factor)
-
-    This is the raw difference between holding the bond outright versus
-    the futures-equivalent position. The futures leg is adjusted by the
-    conversion factor to make the comparison fair.
 
     Args:
         cash_price:    clean cash price as % of par (e.g. 99.50)
@@ -57,34 +92,38 @@ def gross_basis(
 
 def carry(
     coupon: float,
-    cash_price: float,
+    dirty_price: float,
     repo_rate: float,
     days: int,
+    maturity: date,
+    settlement: date,
 ) -> float:
     """
     Compute carry — net income from holding a financed bond position.
 
-    Carry = coupon income (ACT/365) - repo financing cost (ACT/360)
+    Carry = coupon income (ACT/ACT) - repo financing cost (ACT/360)
 
     The asymmetric day count is US market convention:
-      - Coupon accrues on ACT/365 (more days = more coupon income)
+      - Coupon accrues on ACT/ACT (ICMA) — consistent with Treasury accrued interest
       - Repo is charged on ACT/360 (repo market standard, slightly higher cost)
 
     Args:
-        coupon:     annual coupon rate as decimal (e.g. 0.04375)
-        cash_price: dirty cash price as % of par (clean + accrued)
-        repo_rate:  overnight repo rate as decimal (e.g. 0.053)
-        days:       holding period in calendar days
+        coupon:      annual coupon rate as decimal (e.g. 0.04375)
+        dirty_price: dirty cash price as % of par (clean + accrued today)
+        repo_rate:   overnight repo rate as decimal (e.g. 0.053)
+        days:        holding period in calendar days
+        maturity:    bond maturity date
+        settlement:  start of holding period (settlement date)
 
     Returns:
         carry in price points per $100 face value (e.g. 0.45)
         Positive = net income (coupon > financing cost)
         Negative = net cost  (financing cost > coupon)
     """
-    coupon_income   = (coupon * 100) * (days / 365)       # ACT/365
-    financing_cost  = cash_price * repo_rate * (days / 360)  # ACT/360
+    ci             = coupon_income_act_act(coupon, maturity, settlement, days)
+    financing_cost = dirty_price * repo_rate * (days / 360)
 
-    return coupon_income - financing_cost
+    return ci - financing_cost
 
 
 def net_basis(
@@ -94,6 +133,8 @@ def net_basis(
     coupon: float,
     repo_rate: float,
     days: int,
+    maturity: date,
+    settlement: date,
 ) -> float:
     """
     Compute net basis.
@@ -111,15 +152,16 @@ def net_basis(
         coupon:        annual coupon rate as decimal
         repo_rate:     repo rate as decimal
         days:          days to futures delivery
+        maturity:      bond maturity date
+        settlement:    today's settlement date
 
     Returns:
         net basis in price points (e.g. 0.0719)
     """
-    gb = gross_basis(cash_price, futures_price, conv_factor)
-
-    # carry uses dirty price (clean + accrued), approximated here as cash_price
-    # for simplicity — production would pass dirty price explicitly
-    c  = carry(coupon, cash_price, repo_rate, days)
+    gb          = gross_basis(cash_price, futures_price, conv_factor)
+    ai          = accrued_interest(coupon, maturity, settlement)
+    dirty_price = cash_price + ai
+    c           = carry(coupon, dirty_price, repo_rate, days, maturity, settlement)
 
     return gb - c
 
@@ -130,7 +172,8 @@ def implied_repo(
     conv_factor: float,
     coupon: float,
     days: int,
-    accrued: float = 0.0,
+    settlement: date,
+    maturity: date,
 ) -> float:
     """
     Compute the implied repo rate.
@@ -141,11 +184,12 @@ def implied_repo(
     return do I earn on my cash investment?"
 
     Formula (ACT/360 annualisation, repo market convention):
-      Invoice price = futures_price × conv_factor + accrued_at_delivery
+      dirty_price   = cash_price + accrued_at_settlement  (ACT/ACT)
+      invoice_price = futures_price × conv_factor + accrued_at_delivery  (ACT/ACT)
+      coupon_income = ACT/ACT income between settlement and delivery
       Implied repo  = (invoice + coupon_income - dirty_price) / dirty_price × (360/days)
 
-    The bond with the HIGHEST implied repo is the CTD — the short will
-    always deliver whichever bond maximises this return.
+    The bond with the HIGHEST implied repo is the CTD.
 
     Args:
         cash_price:    clean cash price as % of par
@@ -153,17 +197,21 @@ def implied_repo(
         conv_factor:   CME conversion factor
         coupon:        annual coupon rate as decimal
         days:          calendar days to futures delivery
-        accrued:       accrued interest at delivery date (% of par)
+        settlement:    today's settlement date
+        maturity:      bond maturity date
 
     Returns:
         implied repo rate as decimal (e.g. 0.0552 = 5.52%)
     """
-    dirty_price   = cash_price + accrued
-    invoice_price = futures_price * conv_factor + accrued
+    delivery    = settlement + timedelta(days=days)
 
-    # coupon income earned between today and delivery (ACT/365)
-    coupon_income = (coupon * 100) * (days / 365)
+    ai_today    = accrued_interest(coupon, maturity, settlement)
+    ai_delivery = accrued_interest(coupon, maturity, delivery)
 
-    total_proceeds = invoice_price + coupon_income
+    dirty_price   = cash_price + ai_today
+    invoice_price = futures_price * conv_factor + ai_delivery
+    ci            = coupon_income_act_act(coupon, maturity, settlement, days)
+
+    total_proceeds = invoice_price + ci
 
     return ((total_proceeds - dirty_price) / dirty_price) * (360 / days)

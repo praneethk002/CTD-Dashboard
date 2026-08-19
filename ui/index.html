@@ -1083,7 +1083,11 @@ canvas#basisChart {
    No framework. No build step. Native fetch + DOM manipulation.
    ============================================================ */
 
-const API = 'http://localhost:5001/api';
+// Auto-detect API base: use current origin when deployed, localhost for dev.
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5001'
+  : window.location.origin;
+const API      = `${API_BASE}/api`;
 const CONTRACT = 'TYM26';
 
 // store CTD cusip globally so carry/history can reference it
@@ -1164,11 +1168,11 @@ function renderBasket(basket) {
     const irColor = isCTD ? 'style="color:var(--amber)"' : '';
 
     return `
-      <tr class="${isCTD ? 'ctd-row' : ''}" onclick="selectBond('${bond.cusip}', '${bond.label}')">
+      <tr class="${isCTD ? 'ctd-row' : ''}" onclick="selectBond('${escapeHtml(bond.cusip)}', '${escapeHtml(bond.label)}')">
         <td>
           <div class="bond-label">
             ${isCTD ? '<span class="ctd-tag">CTD</span>' : ''}
-            ${bond.label}
+            ${escapeHtml(bond.label)}
           </div>
         </td>
         <td>${bond.cash_price.toFixed(4)}</td>
@@ -1253,10 +1257,10 @@ function renderScenarios(data) {
 
     const shiftLabel = s.shift_bps > 0 ? `+${s.shift_bps}` : `${s.shift_bps}`;
     // shorten label for display: "3.750% Mar-33" → "Mar-33"
-    const shortCtd   = s.ctd_label.split(' ').slice(-1)[0];
+    const shortCtd   = escapeHtml(s.ctd_label.split(' ').slice(-1)[0]);
 
     return `
-      <div class="${cellClass}" title="${s.ctd_label} | ${s.spread_to_runner_bps.toFixed(1)} bps spread">
+      <div class="${cellClass}" title="${escapeHtml(s.ctd_label)} | ${s.spread_to_runner_bps.toFixed(1)} bps spread">
         <div class="sc-shift">${shiftLabel}</div>
         <div class="sc-ctd">${shortCtd}</div>
         <div class="sc-spread">${s.spread_to_runner_bps.toFixed(0)}bp</div>
@@ -1503,7 +1507,7 @@ async function sendChat() {
   appendThinking(thinkingId);
 
   try {
-    const res  = await fetch('http://localhost:5001/api/chat', {
+    const res  = await fetch(`${API_BASE}/api/chat`, {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({question}),
@@ -1569,7 +1573,7 @@ function appendToolCallLog(toolCalls) {
     item.innerHTML = `
       <div class="tool-call-header" onclick="toggleToolCall(this)">
         <div class="tool-call-icon"></div>
-        <div class="tool-call-name">${tc.name}</div>
+        <div class="tool-call-name">${escapeHtml(tc.name)}</div>
         <div class="tool-call-input-label">${escapeHtml(inputStr)}</div>
         <div class="tool-call-chevron">▶</div>
       </div>

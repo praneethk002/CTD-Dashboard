@@ -15,7 +15,7 @@ import pytest
 from core.basket import conversion_factor, get_basket
 from core.carry import implied_repo
 from core.ctd import ctd_transition_threshold, rank_basket
-from core.pricing import accrued_interest, price_bond, ytm_from_price
+from core.pricing import price_bond, ytm_from_price
 
 
 def test_price_bond_at_par_when_ytm_equals_coupon():
@@ -72,10 +72,7 @@ def test_ctd_transition_threshold_equalizes_implied_repo():
     )
     f_star = result["transition_threshold_futures_price"]
 
-    ctd_accrued = accrued_interest(ctd_coupon, ctd_maturity, settlement)
-    runner_accrued = accrued_interest(runner_coupon, runner_maturity, settlement)
-
-    ir_ctd = implied_repo(ctd_price, f_star, ctd_cf, ctd_coupon, days, ctd_accrued)
-    ir_runner = implied_repo(runner_price, f_star, runner_cf, runner_coupon, days, runner_accrued)
+    ir_ctd = implied_repo(ctd_price, f_star, ctd_cf, ctd_coupon, days, settlement, ctd_maturity)
+    ir_runner = implied_repo(runner_price, f_star, runner_cf, runner_coupon, days, settlement, runner_maturity)
 
     assert ir_ctd == pytest.approx(ir_runner, abs=1e-6)

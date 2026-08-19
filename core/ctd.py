@@ -29,12 +29,12 @@ The F* formula (closed form, exact):
 No I/O. No database. Pure functions only.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
 from core.basket import conversion_factor, DELIVERY_DATE
-from core.carry import implied_repo, net_basis, gross_basis
+from core.carry import coupon_income_act_act, implied_repo, net_basis, gross_basis
 from core.pricing import price_bond, dv01, accrued_interest
 
 
@@ -76,14 +76,13 @@ def rank_basket(
         mat     = bond["maturity"]
         label   = bond["label"]
 
-        ytm     = yields[cusip]
-        cf      = conversion_factor(coupon, mat, delivery)
-        accrued = accrued_interest(coupon, mat, settlement)
-        price   = price_bond(coupon, mat, ytm, settlement)
+        ytm   = yields[cusip]
+        cf    = conversion_factor(coupon, mat, delivery)
+        price = price_bond(coupon, mat, ytm, settlement)
 
-        ir  = implied_repo(price, futures_price, cf, coupon, days, accrued)
+        ir  = implied_repo(price, futures_price, cf, coupon, days, settlement, mat)
         gb  = gross_basis(price, futures_price, cf)
-        nb  = net_basis(price, futures_price, cf, coupon, repo_rate, days)
+        nb  = net_basis(price, futures_price, cf, coupon, repo_rate, days, mat, settlement)
         d01 = dv01(coupon, mat, ytm, settlement)
 
         rows.append({
@@ -150,19 +149,24 @@ def ctd_transition_threshold(
           distance_to_threshold_pts:          |current F - F*| in price points
           direction:                          "RALLY" or "SELLOFF"
     """
-    # accrued interest today for dirty price
-    ctd_accrued    = accrued_interest(ctd_coupon,    ctd_maturity,    settlement)
-    runner_accrued = accrued_interest(runner_coupon, runner_maturity, settlement)
+    delivery = settlement + timedelta(days=days)
 
-    # dirty prices
-    p_a = ctd_price    + ctd_accrued
-    p_b = runner_price + runner_accrued
+    # dirty prices at settlement (ACT/ACT accrued)
+    ctd_ai_today    = accrued_interest(ctd_coupon,    ctd_maturity,    settlement)
+    runner_ai_today = accrued_interest(runner_coupon, runner_maturity, settlement)
 
-    # coupon income + accrued at delivery
-    # CA_x = coupon accrual over holding period (ACT/365) + accrued at delivery
-    # For simplicity we use current accrued as proxy for accrued at delivery
-    ca_a = (ctd_coupon    * 100 * days / 365) + ctd_accrued
-    ca_b = (runner_coupon * 100 * days / 365) + runner_accrued
+    p_a = ctd_price    + ctd_ai_today
+    p_b = runner_price + runner_ai_today
+
+    # accrued at delivery (not today's accrued — these differ whenever a coupon
+    # falls between settlement and delivery)
+    ctd_ai_delivery    = accrued_interest(ctd_coupon,    ctd_maturity,    delivery)
+    runner_ai_delivery = accrued_interest(runner_coupon, runner_maturity, delivery)
+
+    # CA_x = coupon income (ACT/ACT) + accrued at delivery
+    # This is exactly what implied_repo adds to the invoice price.
+    ca_a = coupon_income_act_act(ctd_coupon,    ctd_maturity,    settlement, days) + ctd_ai_delivery
+    ca_b = coupon_income_act_act(runner_coupon, runner_maturity, settlement, days) + runner_ai_delivery
 
     # F* = (CA_B·P_A - CA_A·P_B) / (CF_A·P_B - CF_B·P_A)
     numerator   = ca_b * p_a - ca_a * p_b
@@ -192,19 +196,21 @@ def basis_dv01(
     not off this specific bond.
 
     Hedge construction:
-      To duration-neutral hedge 1 bond, short (1/CF) futures.
-      Hedge DV01 = (1/CF) * futures_dv01 * CF = futures_dv01
+      To duration-neutral hedge 1 bond, short (1/CF) futures contracts.
+      If futures_dv01 is the DV01 of one contract (per $100 face equivalent),
+      then DV01 of the (1/CF)-contract short = futures_dv01 / CF.
 
     Residual:
-      basis_dv01 = bond_dv01 - futures_dv01
+      basis_dv01 = bond_dv01 - futures_dv01 / conv_factor
 
-    For the CTD itself this is near zero (the CF was calibrated to it).
-    For non-CTD basket members the residual is meaningful and represents
+    For the CTD itself this is zero when conv_factor == 1; for real TY bonds
+    where CF < 1 the CTD carries a small residual.
+    For non-CTD basket members the residual is more meaningful and represents
     the rate sensitivity the CF hedge fails to cancel.
 
     Args:
         bond_dv01:    DV01 of this bond per $100 face value
-        futures_dv01: DV01 of the futures contract (priced off the CTD)
+        futures_dv01: DV01 of one futures contract (per $100 face equivalent)
         conv_factor:  CME conversion factor of this bond
 
     Returns:
@@ -212,5 +218,4 @@ def basis_dv01(
         Positive: bond is more rate-sensitive than the futures hedge
         Negative: bond is less rate-sensitive than the futures hedge
     """
-    hedge_dv01 = (1.0 / conv_factor) * futures_dv01 * conv_factor
-    return bond_dv01 - hedge_dv01
+    return bond_dv01 - futures_dv01 / conv_factor

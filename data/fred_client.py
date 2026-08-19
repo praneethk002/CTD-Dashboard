@@ -25,6 +25,7 @@ Caching:
   during the same session.
 """
 
+import logging
 import os
 import time
 from datetime import date, timedelta
@@ -32,6 +33,8 @@ from typing import Optional
 
 import urllib.request
 import json
+
+log = logging.getLogger(__name__)
 
 # FRED series IDs mapped to maturity in years
 FRED_SERIES = {
@@ -188,7 +191,8 @@ def _fetch_series(series_id: str, api_key: str) -> Optional[float]:
         _cache[series_id] = (time.time(), yield_dec)
         return yield_dec
 
-    except Exception:
+    except Exception as exc:
+        log.warning("FRED fetch failed for %s: %s", series_id, exc)
         return None
 
 

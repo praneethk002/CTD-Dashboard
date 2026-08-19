@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.basket import get_basket, DELIVERY_DATE
 from core.ctd import rank_basket
 from data.db import BasisDB
-from data.fred_client import build_basket_yields
+from data.fred_client import build_basket_yields, get_yield_curve
 
 
 # ------------------------------------------------------------------
@@ -69,33 +69,39 @@ def seed(days: int = 90, reset: bool = False, db_path: Path = None):
         print("Resetting database...")
         db.reset()
 
-    rng     = np.random.default_rng(RNG_SEED)
-    basket  = get_basket()
+    rng    = np.random.default_rng(RNG_SEED)
+    basket = get_basket()
 
-    # generate yield path: random walk with daily shocks
-    shocks       = rng.normal(0, DAILY_VOL, days)
-    yield_path   = BASE_YIELD + np.cumsum(shocks)
-    yield_path   = np.clip(yield_path, 0.005, 0.15)  # keep yields in [0.5%, 15%]
+    # generate yield path: random walk anchored to 10Y, with daily shocks
+    shocks     = rng.normal(0, DAILY_VOL, days)
+    yield_path = BASE_YIELD + np.cumsum(shocks)
+    yield_path = np.clip(yield_path, 0.005, 0.15)  # keep yields in [0.5%, 15%]
 
-    # futures price drifts slightly with yields (inverse relationship)
+    # futures price drifts inversely with yields (approx. TY DV01 ≈ 8 pts per 1%)
     futures_path = BASE_FUTURES - (yield_path - BASE_YIELD) * 800
+
+    # fetch base yield curve once (uses FRED if available, otherwise default curve)
+    base_curve  = get_yield_curve()
+    base_10y    = base_curve.get(10.0, BASE_YIELD)
 
     # generate dates: go back `days` calendar days from today
     # skip weekends (crude approximation — real implementation uses trading calendar)
-    end_date   = date.today() - timedelta(days=1)
-    all_dates  = _trading_days(end_date, days)
+    end_date  = date.today() - timedelta(days=1)
+    all_dates = _trading_days(end_date, days)
 
     print(f"Seeding {len(all_dates)} days of TYM26 history...")
 
     written = 0
     for i, snapshot_dt in enumerate(all_dates):
-        ytm           = float(yield_path[i])
+        ytm_10y       = float(yield_path[i])
         futures_price = float(futures_path[i])
         days_to_del   = max(1, (DELIVERY_DATE - snapshot_dt).days)
 
-        # build flat yield curve at today's 10Y yield
-        # (simplification: all bonds priced at same yield)
-        yields = {b["cusip"]: ytm for b in basket}
+        # apply parallel shift to the base curve so each bond gets a
+        # maturity-interpolated yield rather than a single flat rate
+        shift         = ytm_10y - base_10y
+        shifted_curve = {m: y + shift for m, y in base_curve.items()}
+        yields        = build_basket_yields(shifted_curve, basket, snapshot_dt)
 
         # rank basket and compute all metrics
         basket_df = rank_basket(
@@ -119,7 +125,7 @@ def seed(days: int = 90, reset: bool = False, db_path: Path = None):
         if written % 10 == 0:
             ctd = basket_df[basket_df["is_ctd"]].iloc[0]
             print(
-                f"  {snapshot_dt}  yield={ytm*100:.3f}%  "
+                f"  {snapshot_dt}  yield={ytm_10y*100:.3f}%  "
                 f"CTD={ctd['label']}  IR={ctd['implied_repo_pct']:.2f}%"
             )
 

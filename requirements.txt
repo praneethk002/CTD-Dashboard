@@ -1,9 +1,13 @@
-numpy
-scipy
-pandas
-flask
-flask-cors
-anthropic
-mcp
-fastmcp
-pytest
+# CTD Basis Monitor — Python dependencies
+# Install with: pip install -r requirements.txt
+
+flask>=3.0.0
+flask-cors>=4.0.0
+anthropic>=0.40.0
+mcp>=1.0.0
+fastmcp>=0.4.0
+scipy>=1.12.0
+numpy>=1.26.0
+pandas>=2.2.0
+gunicorn>=22.0.0
+pytest>=8.0.0

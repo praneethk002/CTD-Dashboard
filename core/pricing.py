@@ -19,6 +19,7 @@ Clean price vs dirty price:
 No I/O. No database. Pure functions only.
 """
 
+import calendar
 from datetime import date
 
 import numpy as np
@@ -248,7 +249,6 @@ def coupon_cashflows_between(
         try:
             d = date(y, m, d.day)
         except ValueError:
-            import calendar
             last_day = calendar.monthrange(y, m)[1]
             d = date(y, m, last_day)
 
@@ -280,7 +280,6 @@ def _coupon_dates(maturity: date, settlement: date) -> tuple[date, date]:
                 candidates.append(date(y, m, coupon_day))
             except ValueError:
                 # handle month-end edge cases (e.g. Feb 30 doesn't exist)
-                import calendar
                 last_day = calendar.monthrange(y, m)[1]
                 candidates.append(date(y, m, last_day))
 
@@ -325,7 +324,6 @@ def _build_cash_flows(
         try:
             d = date(y, m, d.day)
         except ValueError:
-            import calendar
             last_day = calendar.monthrange(y, m)[1]
             d = date(y, m, last_day)
 

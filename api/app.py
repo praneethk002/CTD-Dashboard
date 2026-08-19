@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import anthropic
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -68,6 +68,20 @@ app  = Flask(__name__)
 CORS(app, allow_private_network=True)
 db   = BasisDB()
 pf_db = PortfolioDB()
+
+# Auto-seed database if empty (needed for ephemeral disks like Render free tier)
+def _auto_seed():
+    try:
+        status = db.get_status()
+        if status.get("total_rows", 0) == 0:
+            from data.seed import seed
+            seed(days=90, reset=True)
+    except Exception:
+        pass
+
+_auto_seed()
+
+CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # path to MCP server entry point
 MCP_SERVER_PATH = str(Path(__file__).parent.parent / "mcp_server" / "server.py")
@@ -156,8 +170,8 @@ def chat():
             loop.close()
 
         return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "Chat request failed — check server logs"}), 500
 
 
 async def _run_mcp_chat(question: str, api_key: str) -> dict:
@@ -173,7 +187,10 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
     server_params = StdioServerParameters(
         command = sys.executable,   # use same Python interpreter
         args    = [MCP_SERVER_PATH],
-        env     = {**os.environ},
+        env     = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+        },
     )
 
     tool_calls_log = []
@@ -201,7 +218,7 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
             messages = [{"role": "user", "content": question}]
 
             response = anthropic_client.messages.create(
-                model      = "claude-sonnet-4-20250514",
+                model      = CLAUDE_MODEL,
                 max_tokens = 1024,
                 system     = SYSTEM_PROMPT,
                 tools      = anthropic_tools,
@@ -260,7 +277,7 @@ async def _run_mcp_chat(question: str, api_key: str) -> dict:
 
                 # next Claude turn with tool results
                 response = anthropic_client.messages.create(
-                    model      = "claude-sonnet-4-20250514",
+                    model      = CLAUDE_MODEL,
                     max_tokens = 1024,
                     system     = SYSTEM_PROMPT,
                     tools      = anthropic_tools,
@@ -285,15 +302,10 @@ def _contract() -> str:
 
 @app.get("/api/status")
 def status():
-    import sqlite3
     try:
-        conn   = sqlite3.connect(str(Path(__file__).parent.parent / "basis_monitor.db"))
-        rows   = conn.execute("SELECT COUNT(*) FROM basis_snapshots").fetchone()[0]
-        latest = conn.execute("SELECT MAX(snapshot_dt) FROM basis_snapshots").fetchone()[0]
-        conn.close()
-        return jsonify({"status": "ok", "total_rows": rows, "latest_snapshot": latest})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify(db.get_status())
+    except Exception:
+        return jsonify({"status": "error", "message": "Database unavailable"}), 500
 
 
 @app.get("/api/basket")
@@ -303,13 +315,19 @@ def basket():
 
 @app.get("/api/history/<cusip>")
 def history(cusip):
-    days = int(request.args.get("days", 90))
+    try:
+        days = int(request.args.get("days", 90))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid 'days' parameter"}), 400
     return jsonify(get_basis_history(cusip, _contract(), days))
 
 
 @app.get("/api/percentile")
 def percentile():
-    days = int(request.args.get("days", 90))
+    try:
+        days = int(request.args.get("days", 90))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid 'days' parameter"}), 400
     return jsonify(get_basis_percentile(_contract(), days))
 
 
@@ -326,7 +344,10 @@ def proximity():
 @app.get("/api/scenarios")
 def scenarios():
     shifts_raw = request.args.get("shifts")
-    shifts     = [int(x) for x in shifts_raw.split(",")] if shifts_raw else None
+    try:
+        shifts = [int(x) for x in shifts_raw.split(",")] if shifts_raw and shifts_raw.strip() else None
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid 'shifts' parameter — expected comma-separated integers"}), 400
     return jsonify(run_scenario_grid(_contract(), shifts))
 
 
@@ -338,7 +359,10 @@ def threshold():
 @app.get("/api/carry/<cusip>")
 def carry(cusip):
     repo_rate = request.args.get("repo_rate")
-    rate      = float(repo_rate) if repo_rate else None
+    try:
+        rate = float(repo_rate) if repo_rate else None
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid 'repo_rate' parameter"}), 400
     return jsonify(get_carry_roll(cusip, _contract(), rate))
 
 
@@ -545,6 +569,18 @@ def portfolio_commentary():
 
 
 # ------------------------------------------------------------------
+# Serve frontend — single-process deployment
+# ------------------------------------------------------------------
+
+UI_DIR = str(Path(__file__).parent.parent / "ui")
+
+
+@app.route("/")
+def serve_ui():
+    return send_from_directory(UI_DIR, "index.html")
+
+
+# ------------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------------
 
@@ -552,4 +588,4 @@ if __name__ == "__main__":
     print("CTD Basis Monitor API — http://localhost:5001")
     print(f"MCP server: {MCP_SERVER_PATH}")
     print(f"ANTHROPIC_API_KEY: {'set' if os.environ.get('ANTHROPIC_API_KEY') else 'NOT SET'}")
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(host="127.0.0.1", port=5001, debug=False)
