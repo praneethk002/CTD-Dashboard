@@ -4,7 +4,12 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python -m gunicorn api.app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    # workers=1: api/app.py auto-seeds both SQLite DBs on boot if empty (needed
+    # for Render's ephemeral disk). With >1 worker, each process runs that
+    # check independently at import time and races writing to the same file —
+    # observed in production as a truncated/corrupted dataset. Single worker
+    # is plenty for this demo's traffic and makes the seed-on-boot safe.
+    startCommand: python -m gunicorn api.app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
